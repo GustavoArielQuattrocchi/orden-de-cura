@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orden de Cura – Agroquímicos (Offline + Nube)</title>
+  <style>
+    :root{
+      --bg:#0f172a; --panel:#111827; --card:#111827; --ink:#e5e7eb; --muted:#9ca3af;
+      --accent:#22c55e; --danger:#ef4444; --brand:#38bdf8; --paper:#ffffff; --line:#e5e7eb; --chip:#0b1b2e;
+    }
+    *{ box-sizing:border-box } html,body{ height:100% }
+    body{ margin:0; background:linear-gradient(120deg,#0b1222,#0e1b2e); color:var(--ink);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+    body.organic{ background: linear-gradient(120deg, #0a3d2c, #0f6a48); }
+
+    header{ display:flex;align-items:center;justify-content:space-between; gap:10px; flex-wrap:wrap;
+      padding:16px 20px; border-bottom:1px solid rgba(255,255,255,.07);
+      position:sticky;top:0;background:rgba(11,18,34,.9); backdrop-filter: blur(8px); z-index:10; }
+    header h1{ font-size:1.1rem; margin:0; letter-spacing:.3px }
+    header .btns{ display:flex; gap:8px; flex-wrap:wrap }
+    .btn{ border:1px solid rgba(255,255,255,.15); padding:10px 14px; border-radius:12px; background:#0c1729; color:var(--ink);
+      cursor:pointer; font-weight:600; letter-spacing:.2px; transition:.06s transform,.2s background,.2s border-color }
+    .btn:hover{ transform:translateY(-1px); border-color:rgba(255,255,255,.28) } .btn:active{ transform:translateY(0) }
+    .btn.primary{ background:linear-gradient(180deg,#10b981,#059669); border-color:#24d3ae; color:#02160f }
+    .btn.warning{ background:linear-gradient(180deg,#f59e0b,#d97706); border-color:#fbbf24; color:#1a1206 }
+    .btn.danger{ background:linear-gradient(180deg,#ef4444,#dc2626); border-color:#f87171; color:#1b0b0b }
+    .btn.light{ background:#0b1b2e } .btn.small{ padding:8px 10px; border-radius:10px; font-size:.9rem }
+
+    main{ max-width: 1180px; margin: 18px auto 64px; padding: 0 16px }
+    .grid{ display:grid; grid-template-columns: 1fr; gap: 16px }
+    @media(min-width: 980px){ .grid{ grid-template-columns: 1fr 1fr } }
+
+    .card{ background: rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.09); border-radius:16px; padding:16px 16px 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+    .card h2{ margin:0 0 12px; font-size:1rem; color:#d1d5db; letter-spacing:.3px }
+    label{ display:block; font-size:.9rem; color:var(--muted); margin:8px 0 6px }
+    input[type="text"],input[type="date"],input[type="number"],textarea,select{
+      width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.16);
+      background:#0a1525; color:var(--ink); outline:none;
+    }
+    input[type="number"]{ -webkit-appearance:none; appearance:none; }
+    textarea{ min-height:72px; resize:vertical }
+    .row{ display:grid; grid-template-columns: 1fr 1fr; gap:12px }
+
+    .factor{
+      display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.15); background:var(--chip); color:#cbd5e1; font-size:.9rem;
+    }
+
+    table{ width:100%; border-collapse: collapse; margin-top:8px; border-radius:12px; overflow:hidden; }
+    thead th{ text-align:left; font-weight:700; font-size:.9rem; color:#e5e7eb; background:#0b1b2e; padding:10px 8px; }
+    tbody td{ border-top:1px solid rgba(255,255,255,.12); padding:8px 6px; vertical-align: top; }
+    tbody tr:hover{ background: rgba(255,255,255,.03) }
+    .tbl-input{ width:100%; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,.14); background:#091223; color:var(--ink) }
+
+    .tools{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; justify-content:space-between; align-items:center }
+    .tools .right{ display:flex; gap:10px; flex-wrap:wrap }
+
+    .modal{ position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.55); z-index:50 }
+    .modal.open{ display:flex }
+    .modal .sheet{ width:min(980px, 92vw); max-height: 86vh; overflow:auto; background:#0a1422; border:1px solid rgba(255,255,255,.15);
+      border-radius:16px; padding:16px }
+    .modal h3{ margin:0 0 12px }
+
+    .paper{ background:var(--paper); color:#0b1222; border-radius:14px; padding:18px; border:1px solid var(--line) }
+    .paper h1{ font-size:1.05rem; margin:0 0 10px }
+    .paper .meta{ display:flex; flex-wrap:wrap; gap:12px; font-size:.95rem }
+    .paper .meta div{ background:#f7f7f7; padding:8px 10px; border-radius:10px; border:1px solid #e5e7eb }
+    .paper table{ border:1px solid #e5e7eb } .paper thead th{ background:#f3f4f6; color:#0b1222 }
+    .paper tbody td{ border-top:1px solid #e5e7eb }
+
+    /* --------- PDF: Solo imprime #printArea ---------- */
+    @media print {
+      @page { size: A4; margin: 14mm; }
+      body { background:#ffffff !important; }
+      body * { visibility: hidden !important; }
+      #printArea, #printArea * { visibility: visible !important; }
+      #printArea {
+        position: absolute !important;
+        inset: 0 auto auto 0 !important;
+        width: auto !important;
+        margin: 0 !important;
+        border: none !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+        background: #ffffff !important;
+      }
+      .no-print { display: none !important; }
+    }
+
+    /* Badges */
+    #storageStatus, #cloudStatus{
+      position:fixed; right:10px; padding:6px 10px; border-radius:10px; font:600 12px system-ui; color:#0b1222; z-index:9999; opacity:.9
+    }
+    #storageStatus{ bottom:10px; background:#60a5fa; }
+    #cloudStatus{ bottom:44px; background:#d1d5db; }
+  </style>
+</head>
+<body>
+  <header class="no-print">
+    <h1>🧾 Orden de cura – Aplicación de agroquímicos</h1>
+    <div class="btns">
+      <button class="btn primary" id="btnNueva">Nueva orden</button>
+      <button class="btn light" id="btnGuardar">Guardar</button>
+      <button class="btn light" id="btnListado">Ver/Buscar órdenes</button>
+      <button class="btn warning" id="btnPDF">Generar PDF</button>
+      <button class="btn light" id="btnBackup">Backup (.json)</button>
+      <label class="btn light" for="restoreFile">Restaurar</label>
+      <input id="restoreFile" type="file" accept=".json,application/json" style="display:none" />
+      <button class="btn light" id="btnLogin">Iniciar sesión</button>
+      <button class="btn light" id="btnLogout" style="display:none">Cerrar sesión</button>
+      <button class="btn light" id="btnSync" title="Forzar sincronización">Sync ahora</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="grid">
+      <section class="card">
+        <h2>Datos principales</h2>
+        <div class="row">
+          <div>
+            <label>N° OC (consecutivo)</label>
+            <input id="oc" type="text" readonly class="tbl-input" value="..." />
+          </div>
+          <div>
+            <label>Fecha</label>
+            <input id="fecha" type="date" class="tbl-input" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>FINCA</label>
+            <select id="finca" class="tbl-input">
+              <option value="">Seleccioná…</option>
+              <option>FOA</option><option>FLP</option><option>SC1</option>
+              <option>SC2</option><option>SC3</option><option>FSP</option>
+            </select>
+          </div>
+          <div>
+            <label>Tipo de Cultivo</label>
+            <select id="cultivo" class="tbl-input">
+              <option value="">Seleccioná…</option>
+              <option>VID</option><option>NOGAL</option><option>OTROS</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Manejo</label>
+            <select id="manejo" class="tbl-input">
+              <option value="">Seleccioná…</option>
+              <option>Orgánico</option><option>Convencional</option>
+            </select>
+          </div>
+          <div>
+            <label>Profesional</label>
+            <select id="tecnico" class="tbl-input">
+              <option value="">Seleccioná…</option>
+              <option>Quattrocchi</option><option>Mateu</option><option>Gutierrez</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Responsable de aplicación</h2>
+        <div class="row">
+          <div>
+            <label>Tractorista</label>
+            <input id="tractorista" type="text" class="tbl-input" placeholder="Nombre del tractorista" />
+          </div>
+          <div>
+            <label>Tractor</label>
+            <input id="tractor" type="text" class="tbl-input" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Maquinaria</label>
+            <input id="maquinaria" type="text" class="tbl-input" placeholder="Ej: Turbina 2000 L" />
+          </div>
+          <div>
+            <label>Volumen maquinaria (L)</label>
+            <input id="volumenMaquinaria" type="number" step="any" min="0.01" class="tbl-input" placeholder="Capacidad tanque (L)" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Volumen de aplicación (L/ha)</label>
+            <input id="volumenAplicacion" type="number" step="any" min="0.01" class="tbl-input" placeholder="L/ha" />
+          </div>
+          <div>
+            <label>Cuartel/Lote (opcional)</label>
+            <input id="cuartel" type="text" class="tbl-input" placeholder="Ej: C12, Lote 5" />
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Productos e indicaciones</h2>
+      <div class="tools no-print">
+        <span class="factor" id="factorChip">Factor: —</span>
+        <div class="right">
+          <button class="btn small light" id="addItem">+ Agregar ítem</button>
+          <button class="btn small danger" id="clearItems">Vaciar</button>
+        </div>
+      </div>
+
+      <datalist id="dlProductos"></datalist>
+
+      <table id="items">
+        <thead>
+          <tr>
+            <th style="width:18%">Producto</th>
+            <th style="width:16%">Ingrediente activo</th>
+            <th style="width:12%">Presentación</th>
+            <th style="width:12%">Dosis/ha</th>
+            <th style="width:12%">Dosis/maquinada</th>
+            <th>Observaciones</th>
+            <th class="no-print" style="width:160px">Acción</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <label style="margin-top:10px">Indicaciones generales</label>
+      <textarea id="indicaciones" class="tbl-input" placeholder="Ej: Aplicar en horas frescas, respetar buffer, EPP obligatorio, etc."></textarea>
+    </section>
+
+    <section class="card">
+      <h2>Resumen imprimible</h2>
+      <div class="paper" id="printArea">
+        <h1>Orden de cura – Aplicación de agroquímicos</h1>
+        <div class="meta" id="metaBox"></div>
+        <table id="printTable">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Ingrediente activo</th>
+              <th>Presentación</th>
+              <th>Dosis/ha</th>
+              <th>Dosis/maquinada</th>
+              <th>Obs.</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div style="margin-top:10px">
+          <strong>Indicaciones:</strong>
+          <div id="printIndicaciones" style="white-space: pre-wrap; margin-top:4px"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 🔍 Modal Listado de Órdenes -->
+  <div class="modal" id="modal">
+    <div class="sheet">
+      <h3>Órdenes guardadas</h3>
+      <div class="row">
+        <div>
+          <label>Buscar por FINCA / Cultivo / OC</label>
+          <input id="q" type="text" class="tbl-input" placeholder="Escribí para filtrar…" />
+        </div>
+        <div style="align-self:end; display:flex; gap:8px">
+          <button class="btn small light" id="btnRefrescar">Refrescar</button>
+          <button class="btn small danger" id="btnCerrarModal">Cerrar</button>
+        </div>
+      </div>
+      <table id="tablaListado" style="margin-top:12px">
+        <thead>
+          <tr>
+            <th>OC</th><th>Fecha</th><th>FINCA</th><th>Cultivo</th>
+            <th>Técnico</th><th class="no-print">Acciones</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p style="color:#9ca3af;margin-top:10px">Sugerencia: usá el buscador para filtrar por OC/FINCA/Cultivo.</p>
+    </div>
+  </div>
+
+  <!-- Badges -->
+  <div id="cloudStatus" class="no-print" title="Estado de la nube">Nube: desconectado</div>
+  <div id="storageStatus" class="no-print">Inicializando almacenamiento…</div>
+
+  <!-- Modal de Login -->
+  <div class="modal" id="loginModal">
+    <div class="sheet">
+      <h3>Iniciar sesión</h3>
+      <p>Ingresá tu email para recibir un enlace mágico.</p>
+      <div class="row">
+        <div>
+          <label>Email</label>
+          <input id="loginEmail" type="email" class="tbl-input" placeholder="tucorreo@empresa.com" />
+        </div>
+        <div style="align-self:end">
+          <button class="btn primary" id="btnSendMagicLink">Enviar enlace</button>
+          <button class="btn light" id="btnCloseLogin">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== SCRIPTS ============== -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- 🔧 CONFIGURACIÓN SUPABASE con selector PROD/DEV -->
+  <script>
+    // Detecta automáticamente si estás en producción (Vercel o dominio propio)
+    const isProd =
+      location.hostname.endsWith(".vercel.app") ||
+      location.hostname === "TU-DOMINIO.com"; // ← COMPLETAR si vas a usar dominio propio
+
+    const SUPABASE_URL = isProd
+      ? "https://xgrkthluicphjqaorxsz.supabase.co"   // ← COMPLETAR: URL PROD
+      : "https://xgrkthluicphjqaorxsz.supabase.co";   // ← COMPLETAR (o repetir PROD)
+
+    const SUPABASE_ANON_KEY = isProd
+      ? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo"                       // ← COMPLETAR: ANON KEY PROD
+      : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo";                       // ← COMPLETAR (o repetir PROD)
+
+    const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Helper badge nube
+    const cloudBadge=document.getElementById('cloudStatus');
+    function setCloudBadge(state){
+      if(state==='conectado'){ cloudBadge.style.background='#34d399'; cloudBadge.textContent='Nube: conectado'; }
+      else if(state==='sincronizando'){ cloudBadge.style.background='#60a5fa'; cloudBadge.textContent='Nube: sincronizando…'; }
+      else if(state==='error'){ cloudBadge.style.background='#ef4444'; cloudBadge.textContent='Nube: error'; }
+      else { cloudBadge.style.background='#d1d5db'; cloudBadge.textContent='Nube: desconectado'; }
+    }
+  </script>
+
+  <!-- ⚙️ Lógica completa (IndexedDB, catálogo, UI, sync, etc.) -->
+  <script>
+/* ===================== Config local ===================== */
+const DB_NAME='RecetaDigitalDB', DB_VERSION=9;
+let db=null, idbOk=true;
+
+/* ====== Badges ====== */
+const storageBadge=document.getElementById('storageStatus');
+
+/* ===================== Helpers DOM ===================== */
+const $  =(s)=>document.querySelector(s);
+const $$ =(s)=>Array.from(document.querySelectorAll(s));
+function todayISO(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+
+/* ===================== localStorage fallback ===================== */
+const LS_KEYS={ settings:'receta_settings', recetas:'receta_items', catalogo:'receta_catalogo' };
+function lsGet(k){ try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch{ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch{ return false; } }
+
+/* ===================== IndexedDB ===================== */
+function openDB(){
+  return new Promise((resolve)=>{
+    if(!('indexedDB' in window)){ idbOk=false; resolve(null); return; }
+    const req=indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded=(e)=>{
+      const udb=e.target.result;
+      let recetas;
+      if(!udb.objectStoreNames.contains('recetas')) recetas=udb.createObjectStore('recetas',{keyPath:'id',autoIncrement:true});
+      else recetas=req.transaction.objectStore('recetas');
+      if(!recetas.indexNames.contains('by_oc')) recetas.createIndex('by_oc','oc',{unique:true});
+      if(!udb.objectStoreNames.contains('settings')) udb.createObjectStore('settings',{keyPath:'key'});
+      if(!udb.objectStoreNames.contains('catalogo')){
+        const cat=udb.createObjectStore('catalogo',{keyPath:'producto'});
+        cat.createIndex('by_producto','producto',{unique:true});
+      }
+    };
+    req.onsuccess=(e)=>{ db=e.target.result; resolve(db); };
+    req.onerror=()=>{ idbOk=false; resolve(null); };
+  });
+}
+function tx(name,mode='readonly'){ return db.transaction(name,mode).objectStore(name); }
+function idbGet(store,key){ return new Promise((res,rej)=>{ try{ const r=tx(store).get(key); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error);}catch(err){rej(err);} }); }
+function idbPut(store,val){ return new Promise((res,rej)=>{ try{ const r=tx(store,'readwrite').put(val); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);}catch(err){rej(err);} }); }
+function idbDelete(store,key){ return new Promise((res,rej)=>{ try{ const r=tx(store,'readwrite').delete(key); r.onsuccess=()=>res(true); r.onerror=()=>rej(r.error);}catch(err){rej(err);} }); }
+function idbCursorAll(store){ return new Promise((res,rej)=>{ const out=[]; try{ const r=tx(store).openCursor(); r.onsuccess=(e)=>{ const c=e.target.result; if(c){out.push(c.value); c.continue();}else res(out); }; r.onerror=()=>rej(r.error);}catch(err){rej(err);} }); }
+
+/* ===================== Settings & consecutivo ===================== */
+async function getSetting(key){ if(!idbOk){ const s=lsGet(LS_KEYS.settings)||{}; return (key in s)?s[key]:null; } const row=await idbGet('settings',key); return row?row.value:null; }
+async function setSetting(key,val){ if(!idbOk){ const s=lsGet(LS_KEYS.settings)||{}; s[key]=val; return lsSet(LS_KEYS.settings,s);} await idbPut('settings',{key,value:val}); return true; }
+async function getNextOC(){ let n=await getSetting('nextOC'); if(n==null||isNaN(Number(n))) n=1; return Number(n); }
+async function setNextOC(n){ n=Math.max(1,Number(n)||1); await setSetting('nextOC',n); }
+async function recomputeNextOC(){ const all=await listRecetas(); const max=all.reduce((m,r)=>Math.max(m, Number((r.oc||'').replace(/^0+/,''))||0),0); const cur=await getNextOC(); if(max+1>cur) await setNextOC(max+1); }
+async function getLastSync(){ return await getSetting('lastSync') || '1970-01-01T00:00:00Z'; }
+async function setLastSync(ts){ await setSetting('lastSync', ts || new Date().toISOString()); }
+
+/* ===================== Catálogo (autocompletar) ===================== */
+async function catAll(){ if(!idbOk) return lsGet(LS_KEYS.catalogo)||[]; return await idbCursorAll('catalogo'); }
+async function catGet(producto){ if(!producto) return null; if(!idbOk){ const arr=lsGet(LS_KEYS.catalogo)||[]; return arr.find(x=>(x.producto||'').toLowerCase()===producto.toLowerCase())||null; } return await idbGet('catalogo',producto); }
+async function catUpsert(entry){
+  if(!entry||!entry.producto) return; entry.producto=String(entry.producto).trim(); entry.updatedAt=Date.now();
+  if(!idbOk){ let arr=lsGet(LS_KEYS.catalogo)||[]; const i=arr.findIndex(x=>(x.producto||'').toLowerCase()===entry.producto.toLowerCase()); if(i>=0) arr[i]={...arr[i],...entry}; else arr.push(entry); lsSet(LS_KEYS.catalogo,arr); }
+  else{ await idbPut('catalogo',entry); }
+  refreshDatalist();
+}
+async function refreshDatalist(){ const dl=$('#dlProductos'); if(!dl) return; const all=await catAll(); all.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); dl.innerHTML=all.map(x=>`<option value="${x.producto}"></option>`).join(''); }
+
+/* ===================== Unidades y cálculo ===================== */
+function num(v){ if(!v) return NaN; return parseFloat(String(v).replace(',', '.').trim()); }
+function parseQuantity(q){
+  if(!q) return {value:NaN, unit:'', kind:'liquid'};
+  const s=q.toLowerCase().replace(',', '.'); const m=s.match(/([-+]?\d*\.?\d+)/); const raw=m?parseFloat(m[1]):NaN;
+  let unit=''; if(/\bml\b/.test(s)) unit='ml'; else if(/\blt?\b|\bl\b|litro|litros/.test(s)) unit='L';
+  else if(/\bkg\b/.test(s)) unit='kg'; else if(/\bg\b(?![a-z])/.test(s)) unit='g'; else unit='L';
+  const kind=(unit==='ml'||unit==='L')?'liquid':'solid';
+  let base=raw; if(kind==='liquid'){ base=unit==='L'?raw*1000:raw; } else { base=unit==='kg'?raw*1000:raw; }
+  return {value:base, unit, kind};
+}
+function unitFromPresentation(p){ if(!p) return null; const s=p.toLowerCase(); if(/\bkg\b/.test(s)) return 'kg'; if(/\bg\b(?![a-z])/.test(s)) return 'g'; if(/\bml\b/.test(s)) return 'ml'; if(/\blt?\b|\bl\b|litro|litros/.test(s)) return 'L'; return null; }
+function formatByTargetUnit(baseValue,targetUnit){
+  if(!isFinite(baseValue)) return ''; const liquid=(targetUnit==='L'||targetUnit==='ml'); let v=baseValue;
+  if(liquid){ if(targetUnit==='L') v/=1000; } else { if(targetUnit==='kg') v/=1000; }
+  const shown=(Math.abs(v)>=1? v.toFixed(2): v.toPrecision(2)).replace(/\.0+$/,'').replace(/(\.\d*[1-9])0+$/,'$1');
+  return `${shown} ${targetUnit}`;
+}
+function getVolumes(){ return { volMaq:num($('#volumenMaquinaria')?.value), volApl:num($('#volumenAplicacion')?.value) }; }
+function updateFactorChip(){ const {volMaq,volApl}=getVolumes(); const c=$('#factorChip'); if(!isFinite(volMaq)||!isFinite(volApl)||volApl<=0){ c.textContent='Factor: —'; return; } c.textContent=`Factor: ${(volMaq/volApl).toFixed(2)} maquinadas/ha`; }
+function recalcDosisMaquinada(){
+  const {volMaq,volApl}=getVolumes(); updateFactorChip();
+  if(!isFinite(volMaq)||!isFinite(volApl)||volApl<=0){ $$('.it-dosisMaquinada').forEach(i=>i.value=''); return; }
+  $$('#items tbody tr').forEach(tr=>{
+    const inHa=tr.querySelector('.it-dosisHa'); const out=tr.querySelector('.it-dosisMaquinada'); const pres=tr.querySelector('.it-presentacion');
+    if(!inHa||!out) return; const q=parseQuantity(inHa.value); if(!isFinite(q.value)){ out.value=''; return; }
+    const target=unitFromPresentation(pres?.value||''); const factor=volMaq/volApl;
+    if(target){
+      const tipoOK=((q.kind==='liquid' && (target==='L'||target==='ml'))||(q.kind==='solid' && (target==='kg'||target==='g')));
+      out.value = formatByTargetUnit(q.value*factor, tipoOK?target:(q.kind==='liquid'?(q.unit==='L'?'L':'ml'):(q.unit==='kg'?'kg':'g')));
+    } else {
+      out.value = formatByTargetUnit(q.value*factor, (q.kind==='liquid'?(q.unit==='L'?'L':'ml'):(q.unit==='kg'?'kg':'g')));
+    }
+  });
+}
+function applyManejoTheme(){ const v=($('#manejo')?.value||'').toLowerCase(); if(v.includes('orgánico')||v.includes('organico')) document.body.classList.add('organic'); else document.body.classList.remove('organic'); }
+
+/* ===================== UI ítems ===================== */
+function rowElement(prefill={}){
+  const tr=document.createElement('tr');
+  tr.innerHTML=`
+    <td><input class="tbl-input it-producto" list="dlProductos" placeholder="Producto" value="${prefill.producto||''}"></td>
+    <td><input class="tbl-input it-ia" placeholder="Ingrediente activo" value="${prefill.ingredienteActivo||''}"></td>
+    <td><input class="tbl-input it-presentacion" placeholder="Litros/kg" value="${prefill.presentacion||''}"></td>
+    <td><input class="tbl-input it-dosisHa" placeholder="Ej: 3000 ml/ha" value="${prefill.dosisHa||''}"></td>
+    <td><input class="tbl-input it-dosisMaquinada" placeholder="(auto)" value="${prefill.dosisMaquinada||''}" readonly></td>
+    <td><input class="tbl-input it-obs" placeholder="Mezcla, pH, buffer, EPP..." value="${prefill.obs||''}"></td>
+    <td class="no-print">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn small light btnDel">Eliminar ítem</button>
+      </div>
+    </td>`;
+  tr.querySelector('.btnDel').addEventListener('click', ()=> tr.remove());
+  tr.querySelector('.it-dosisHa').addEventListener('input', recalcDosisMaquinada);
+  tr.querySelector('.it-presentacion').addEventListener('input', recalcDosisMaquinada);
+  tr.querySelector('.it-producto').addEventListener('change', async (e)=>{
+    const prod=e.target.value.trim(); if(!prod) return; const hit=await catGet(prod);
+    if(hit){
+      if(!tr.querySelector('.it-ia').value) tr.querySelector('.it-ia').value=hit.ia||'';
+      if(!tr.querySelector('.it-presentacion').value) tr.querySelector('.it-presentacion').value=hit.presentacion||'';
+      if(!tr.querySelector('.it-dosisHa').value) tr.querySelector('.it-dosisHa').value=hit.dosisHa||'';
+      recalcDosisMaquinada(); syncPrint();
+    }
+  });
+  const learn=async()=>{ const entry={ producto:tr.querySelector('.it-producto').value.trim(), ia:tr.querySelector('.it-ia').value.trim(), presentacion:tr.querySelector('.it-presentacion').value.trim(), dosisHa:tr.querySelector('.it-dosisHa').value.trim() }; if(entry.producto) await catUpsert(entry); };
+  ['.it-producto','.it-ia','.it-presentacion','.it-dosisHa'].forEach(sel=> tr.querySelector(sel).addEventListener('blur', learn));
+  return tr;
+}
+function addItem(p={}){ $('#items tbody').appendChild(rowElement(p)); recalcDosisMaquinada(); }
+function readItems(){
+  return $$('#items tbody tr').map(tr=> ({
+    producto: tr.querySelector('.it-producto').value.trim(),
+    ingredienteActivo: tr.querySelector('.it-ia').value.trim(),
+    presentacion: tr.querySelector('.it-presentacion').value.trim(),
+    dosisHa: tr.querySelector('.it-dosisHa').value.trim(),
+    dosisMaquinada: tr.querySelector('.it-dosisMaquinada').value.trim(),
+    obs: tr.querySelector('.it-obs').value.trim(),
+  })).filter(x=> x.producto || x.ingredienteActivo || x.obs || x.dosisHa || x.dosisMaquinada);
+}
+
+/* ===================== Imprimible ===================== */
+function buildMetaHTML(data){
+  const meta = [
+    ['OC', data.oc||'—'], ['Fecha', data.fecha||'—'], ['FINCA', data.finca||'—'],
+    ['Cultivo', data.cultivo||'—'], ['Manejo', data.manejo||'—'],
+    ['Maquinaria', data.maquinaria||'—'], ['Vol. maq.', data.volumenMaquinaria||'—'],
+    ['Vol. apl.', data.volumenAplicacion||'—'], ['Cuartel/Lote', data.cuartel||'—'],
+  ].map(([k,v])=> `<div><strong>${k}:</strong> ${v||'—'}</div>`).join('');
+  return meta;
+}
+function currentFormData(){
+  return {
+    oc: $('#oc').value, fecha: $('#fecha').value, finca: $('#finca').value, cultivo: $('#cultivo').value,
+    manejo: $('#manejo').value, tecnico: $('#tecnico')?.value||'', tractorista: $('#tractorista')?.value||'',
+    tractor: $('#tractor')?.value||'', maquinaria: $('#maquinaria').value, volumenMaquinaria: $('#volumenMaquinaria').value,
+    volumenAplicacion: $('#volumenAplicacion').value, cuartel: $('#cuartel').value, indicaciones: $('#indicaciones').value,
+    items: readItems()
+  };
+}
+function setFormFromReceta(r){
+  $('#oc').value=r.oc||''; $('#fecha').value=r.fecha||todayISO();
+  $('#finca').value=r.finca||''; $('#cultivo').value=r.cultivo||'';
+  $('#manejo').value=r.manejo||''; $('#tecnico').value=r.tecnico||'';
+  $('#tractorista').value=r.tractorista||''; $('#tractor').value=r.tractor||'';
+  $('#maquinaria').value=r.maquinaria||''; $('#volumenMaquinaria').value=r.volumenMaquinaria||'';
+  $('#volumenAplicacion').value=r.volumenAplicacion||''; $('#cuartel').value=r.cuartel||'';
+  $('#indicaciones').value=r.indicaciones||'';
+  $('#items tbody').innerHTML=''; (r.items||[]).forEach(addItem);
+  syncPrint(); recalcDosisMaquinada(); applyManejoTheme();
+}
+function syncPrint(){
+  const data = currentFormData();
+  $('#metaBox').innerHTML = buildMetaHTML(data);
+  const pt=$('#printTable tbody'); pt.innerHTML='';
+  for(const it of data.items){
+    const row=document.createElement('tr');
+    row.innerHTML = `<td>${it.producto||''}</td><td>${it.ingredienteActivo||''}</td><td>${it.presentacion||''}</td>
+                     <td>${it.dosisHa||''}</td><td>${it.dosisMaquinada||''}</td><td>${it.obs||''}</td>`;
+    pt.appendChild(row);
+  }
+  $('#printIndicaciones').textContent = data.indicaciones||'';
+}
+
+/* ===================== CRUD local ===================== */
+async function saveReceta(receta){
+  let ocNum = Number((receta.oc||'').toString().replace(/^0+/, '')) || 0;
+  if(ocNum <= 0){ ocNum = await getNextOC(); receta.oc = String(ocNum).padStart(6,'0'); }
+  if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; if(arr.some(r=> String(r.oc)===String(receta.oc))){ alert('Ya existe una orden con ese N° OC. Cambiá el OC.'); throw new Error('OC collision'); } receta.id=(arr.reduce((m,r)=>Math.max(m, r.id||0),0)+1); arr.push(receta); lsSet(LS_KEYS.recetas,arr); }
+  else{ await idbPut('recetas', receta); }
+  const cur=await getNextOC(); const prop=ocNum+1; if(prop>cur) await setNextOC(prop);
+  return receta.id||receta.oc;
+}
+async function listRecetas(){ if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; return arr.sort((a,b)=>Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,''))); } const recs=await idbCursorAll('recetas'); return recs.sort((a,b)=>Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,''))); }
+async function getReceta(id){ if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; return arr.find(r=> Number(r.id)===Number(id))||null; } return await new Promise((res,rej)=>{ try{ const r=tx('recetas').get(id); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error);}catch(err){rej(err);} }); }
+async function deleteRecetaLocal(id){
+  if(!idbOk){
+    let arr=lsGet(LS_KEYS.recetas)||[]; arr=arr.filter(r=> Number(r.id)!==Number(id)); lsSet(LS_KEYS.recetas,arr); return true;
+  }else{
+    await idbDelete('recetas', id); return true;
+  }
+}
+
+/* ===================== Supabase: auth + sync ===================== */
+function uiAuth(isIn){ $('#btnLogin').style.display = isIn ? 'none':''; $('#btnLogout').style.display = isIn ? '' : 'none'; setCloudBadge(isIn ? 'conectado' : 'desconectado'); }
+function openLogin(){ $('#loginModal').classList.add('open'); }
+function closeLogin(){ $('#loginModal').classList.remove('open'); }
+$('#btnLogin').addEventListener('click', openLogin);
+$('#btnCloseLogin').addEventListener('click', closeLogin);
+
+$('#btnSendMagicLink').addEventListener('click', async ()=>{
+  const email = $('#loginEmail').value.trim();
+  if(!email){ alert('Ingresá un email'); return; }
+  const { error } = await supa.auth.signInWithOtp({ email, options:{ emailRedirectTo: window.location.href } });
+  if(error){ alert('Error enviando enlace: '+error.message); return; }
+  alert('Te enviamos un enlace de acceso. Abrilo en este mismo navegador.');
+  closeLogin();
+});
+$('#btnLogout').addEventListener('click', async ()=>{ await supa.auth.signOut(); uiAuth(false); setCloudBadge('desconectado'); });
+
+async function exchangeIfNeeded(){
+  const { data:{ session } } = await supa.auth.getSession();
+  if(session){
+    if (/[?&]code=|[?&]access_token=|[#]access_token=/.test(location.href)) {
+      history.replaceState({}, '', location.origin + location.pathname);
+    }
+    return;
+  }
+  const hasCode = /[?&]code=/.test(location.href) || /[?&]access_token=/.test(location.href) || /[#]access_token=/.test(location.href);
+  if (hasCode) {
+    try{
+      const { error } = await supa.auth.exchangeCodeForSession(location.href);
+      if(!error){
+        history.replaceState({}, '', location.origin + location.pathname);
+      }
+    }catch(e){ console.warn('exchangeCodeForSession:', e?.message||e); }
+  }
+}
+
+/* Upsert nube */
+async function supaUpsertOrder(rec){
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return; // sin login, no sube
+  const owner_id = user.user.id;
+  const payload = {
+    oc: rec.oc, fecha: rec.fecha, finca: rec.finca, cultivo: rec.cultivo, manejo: rec.manejo,
+    tecnico: rec.tecnico||null, tractorista: rec.tractorista||null, tractor: rec.tractor||null,
+    maquinaria: rec.maquinaria||null, vol_maquinaria: rec.volumenMaquinaria? Number(rec.volumenMaquinaria):null,
+    vol_aplicacion: rec.volumenAplicacion? Number(rec.volumenAplicacion):null, cuartel: rec.cuartel||null,
+    indicaciones: rec.indicaciones||null, owner_id, updated_at: new Date().toISOString()
+  };
+  const { data: up, error: e1 } = await supa.from('order_cura').upsert(payload, { onConflict:'oc,owner_id' }).select().single();
+  if(e1) throw e1;
+  const order_id = up.id;
+  await supa.from('order_item').delete().eq('order_id', order_id);
+  if((rec.items||[]).length){
+    const batch = rec.items.map(it=> ({
+      order_id,
+      producto: it.producto||null, ia: it.ingredienteActivo||null, presentacion: it.presentacion||null,
+      dosis_ha: it.dosisHa||null, dosis_maquinada: it.dosisMaquinada||null, obs: it.obs||null
+    }));
+    const { error: e2 } = await supa.from('order_item').insert(batch);
+    if(e2) throw e2;
+  }
+}
+
+/* Delete nube por OC */
+async function supaDeleteOrderByOC(oc){
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return;
+  const { error } = await supa.from('order_cura').delete().eq('oc', oc);
+  if(error) throw error;
+}
+
+/* Pull incremental y merge (last-write-wins) */
+async function supaPullSince(ts){
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return { pulled:0 };
+  const { data: orders, error } = await supa.from('order_cura')
+    .select('id, oc, fecha, finca, cultivo, manejo, tecnico, tractorista, tractor, maquinaria, vol_maquinaria, vol_aplicacion, cuartel, indicaciones, updated_at')
+    .gte('updated_at', ts).order('updated_at',{ascending:true});
+  if(error) throw error;
+  let pulled=0;
+  for(const o of (orders||[])){
+    const { data: items } = await supa.from('order_item').select('producto, ia, presentacion, dosis_ha, dosis_maquinada, obs').eq('order_id', o.id);
+    const receta = {
+      oc:o.oc, fecha:o.fecha, finca:o.finca, cultivo:o.cultivo, manejo:o.manejo,
+      tecnico:o.tecnico||'', tractorista:o.tractorista||'', tractor:o.tractor||'',
+      maquinaria:o.maquinaria||'', volumenMaquinaria:o.vol_maquinaria||'', volumenAplicacion:o.vol_aplicacion||'',
+      cuartel:o.cuartel||'', indicaciones:o.indicaciones||'',
+      items:(items||[]).map(it=>({ producto:it.producto||'', ingredienteActivo:it.ia||'', presentacion:it.presentacion||'', dosisHa:it.dosis_ha||'', dosisMaquinada:it.dosis_maquinada||'', obs:it.obs||'' })),
+      creadoEn:new Date().toISOString(), updated_at:o.updated_at
+    };
+    const locals=await listRecetas(); const hit=locals.find(r=> String(r.oc)===String(receta.oc));
+    const remoteNewer = !hit || (new Date(o.updated_at).getTime() > new Date(hit.updated_at||0).getTime());
+    if(remoteNewer){ if(hit) receta.id=hit.id; await saveReceta(receta); pulled++; }
+  }
+  return { pulled };
+}
+
+async function syncNow(){
+  setCloudBadge('sincronizando');
+  try{
+    const ts = await getLastSync();
+    const { pulled } = await supaPullSince(ts);
+    await setLastSync(new Date().toISOString());
+    alert(`Sync OK. Registros nuevos/actualizados: ${pulled}.`);
+    setCloudBadge('conectado');
+  }catch(err){ console.error(err); alert('Error de sincronización: '+(err.message||err)); setCloudBadge('error'); }
+}
+
+/* ===================== Eventos UI ===================== */
+document.addEventListener('input', (e)=>{
+  if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){
+    syncPrint();
+    if(e.target.matches('.it-dosisHa,#volumenMaquinaria,#volumenAplicacion,.it-presentacion')) recalcDosisMaquinada();
+    if(e.target.id==='manejo') applyManejoTheme();
+    if(e.target.id==='volumenMaquinaria'||e.target.id==='volumenAplicacion'){
+      const v=num(e.target.value); e.target.setCustomValidity((!isFinite(v)||v<=0)?'Debe ser un número mayor que 0':'' );
+    }
+  }
+});
+$('#addItem').addEventListener('click', ()=> addItem() );
+$('#clearItems').addEventListener('click', ()=> { $('#items tbody').innerHTML=''; addItem(); syncPrint(); recalcDosisMaquinada(); });
+$('#btnPDF').addEventListener('click', ()=>{ syncPrint(); window.print(); });
+$('#btnSync').addEventListener('click', syncNow);
+
+/* --- Listado (modal) --- */
+function openModal(){ $('#modal').classList.add('open'); }
+function closeModal(){ $('#modal').classList.remove('open'); }
+
+async function refreshListado(){
+  const data=await listRecetas();
+  const q=($('#q')?.value||'').trim().toLowerCase();
+  const fil=data.filter(r=>{
+    const hay=(s)=> (s||'').toString().toLowerCase().includes(q);
+    return !q || hay(r.finca) || hay(r.cultivo) || hay(r.oc) || hay(r.tecnico);
+  });
+  const tbody=$('#tablaListado tbody'); tbody.innerHTML='';
+  for(const r of fil){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td>${r.oc||''}</td>
+      <td>${r.fecha||''}</td>
+      <td>${r.finca||''}</td>
+      <td>${r.cultivo||''}</td>
+      <td>${r.tecnico||''}</td>
+      <td>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn small light" data-act="cargar" data-id="${r.id}">Cargar</button>
+          <button class="btn small warning" data-act="pdf" data-id="${r.id}">PDF</button>
+          <button class="btn small danger" data-act="eliminar" data-id="${r.id}" data-oc="${r.oc}">Eliminar</button>
+        </div>
+      </td>`;
+    tbody.appendChild(tr);
+  }
+
+  tbody.querySelectorAll('button[data-id]').forEach(btn=>{
+    btn.addEventListener('click', async (ev)=>{
+      const id=Number(btn.getAttribute('data-id'));
+      const act=btn.getAttribute('data-act');
+      const r=await getReceta(id); if(!r) return;
+      if(act==='cargar'){
+        setFormFromReceta(r); closeModal();
+      }else if(act==='pdf'){
+        await printOrderByData(r);
+      }else if(act==='eliminar'){
+        const oc=btn.getAttribute('data-oc')||r.oc;
+        const sure=confirm(`Vas a eliminar la OC ${oc}. ¿Continuar?`);
+        if(!sure) return;
+        try{
+          await deleteRecetaLocal(id);
+          try{ await supaDeleteOrderByOC(oc); }catch(_e){}
+          await refreshListado();
+          alert(`OC ${oc} eliminada.`);
+        }catch(err){
+          alert('Error eliminando: '+(err.message||err));
+        }
+      }
+    });
+  });
+}
+
+document.getElementById('btnListado').addEventListener('click', async ()=>{
+  openModal(); await refreshListado();
+});
+document.getElementById('btnCerrarModal').addEventListener('click', closeModal);
+document.getElementById('btnRefrescar').addEventListener('click', refreshListado);
+const qInput = document.getElementById('q');
+if(qInput){ qInput.addEventListener('input', refreshListado); }
+
+/* --- Backup/Restore --- */
+$('#btnBackup').addEventListener('click', async ()=>{
+  const payload={ exportedAt:new Date().toISOString(), nextOC: await getNextOC(), catalogo: await catAll(), data: await listRecetas() };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`backup_ordenes_${new Date().toISOString().replace(/[:]/g,'-')}.json`; a.click(); URL.revokeObjectURL(a.href);
+});
+$('#restoreFile').addEventListener('change', async (e)=>{
+  const f=e.target.files?.[0]; if(!f){ e.target.value=''; return; }
+  try{
+    const text=await f.text(); const parsed=JSON.parse(text);
+    const arr=Array.isArray(parsed)?parsed:(parsed.data||[]); const nextOC=parsed.nextOC; const cat=parsed.catalogo||[];
+    if(!Array.isArray(arr)){ alert('Archivo inválido'); return; }
+    if(!idbOk){
+      const curr=lsGet(LS_KEYS.recetas)||[]; arr.forEach(r=>{ const cp={...r}; delete cp.id; cp.id=(curr.reduce((m,x)=>Math.max(m,x.id||0),0)+1); curr.push(cp); });
+      lsSet(LS_KEYS.recetas,curr); if(Array.isArray(cat)) lsSet(LS_KEYS.catalogo,cat); if(Number.isInteger(nextOC)){ const s=lsGet(LS_KEYS.settings)||{}; s.nextOC=nextOC; lsSet(LS_KEYS.settings,s); }
+    }else{
+      const store=tx('recetas','readwrite');
+      await new Promise((resolve,reject)=>{
+        let i=0; const putNext=()=>{ if(i>=arr.length){ resolve(); return; } const rec={...arr[i++]}; delete rec.id; const r=store.put(rec);
+          r.onsuccess=putNext; r.onerror=()=>reject(r.error); }; putNext();
+      });
+      for(const c of cat){ await idbPut('catalogo',c); } if(Number.isInteger(nextOC)) await setNextOC(nextOC);
+    }
+    await recomputeNextOC(); await refreshDatalist(); alert('Restauración completada.');
+  }catch(err){ console.error(err); alert('Error al restaurar: '+err.message); }
+  e.target.value='';
+});
+
+/* --- Guardar --- */
+$('#btnGuardar').addEventListener('click', async ()=>{
+  if(!$('#finca').value){ alert('Seleccioná FINCA'); return; }
+  if(!$('#cultivo').value){ alert('Seleccioná Tipo de Cultivo'); return; }
+  if(!$('#manejo').value){ alert('Seleccioná Manejo'); return; }
+
+  for(const it of readItems()){
+    if(it.producto){ await catUpsert({ producto: it.producto, ia: it.ingredienteActivo, presentacion: it.presentacion, dosisHa: it.dosisHa }); }
+  }
+
+  const receta = {
+    oc: $('#oc').value, fecha: $('#fecha').value, finca: $('#finca').value, cultivo: $('#cultivo').value,
+    manejo: $('#manejo').value, tecnico: $('#tecnico')?.value||'', tractorista: $('#tractorista')?.value||'',
+    tractor: $('#tractor')?.value||'', maquinaria: $('#maquinaria').value, volumenMaquinaria: $('#volumenMaquinaria').value,
+    volumenAplicacion: $('#volumenAplicacion').value, cuartel: $('#cuartel').value, indicaciones: $('#indicaciones').value,
+    items: readItems(), creadoEn: new Date().toISOString(), updated_at: new Date().toISOString()
+  };
+
+  try{
+    const id = await saveReceta(receta);
+    $('#oc').value = receta.oc;
+    alert('Orden guardada localmente (ID '+id+'). Intentando sincronizar…');
+    await supaUpsertOrder(receta); // nube
+    await setLastSync(new Date().toISOString());
+    setCloudBadge('conectado');
+  }catch(err){ console.error(err); setCloudBadge('error'); }
+});
+
+/* --- PDF de una OC específica (sin tocar el formulario) --- */
+async function printOrderByData(r){
+  const snap = currentFormData();
+  const metaHTML = buildMetaHTML({
+    oc:r.oc, fecha:r.fecha, finca:r.finca, cultivo:r.cultivo, manejo:r.manejo,
+    maquinaria:r.maquinaria, volumenMaquinaria:r.volumenMaquinaria, volumenAplicacion:r.volumenAplicacion, cuartel:r.cuartel
+  });
+  $('#metaBox').innerHTML = metaHTML;
+
+  const pt=$('#printTable tbody'); pt.innerHTML='';
+  for(const it of (r.items||[])){
+    const row=document.createElement('tr');
+    row.innerHTML = `<td>${it.producto||''}</td><td>${it.ingredienteActivo||''}</td><td>${it.presentacion||''}</td>
+                     <td>${it.dosisHa||''}</td><td>${it.dosisMaquinada||''}</td><td>${it.obs||''}</td>`;
+    pt.appendChild(row);
+  }
+  $('#printIndicaciones').textContent = r.indicaciones||'';
+  window.print();
+  setFormFromReceta(snap);
+  syncPrint();
+}
+
+/* --- Botón Nueva --- */
+$('#btnNueva').addEventListener('click', async ()=>{
+  $('#fecha').value = todayISO();
+  $('#finca').value = ''; $('#cultivo').value=''; $('#manejo').value='';
+  $('#tecnico').value=''; $('#tractorista').value=''; $('#tractor').value='';
+  $('#maquinaria').value=''; $('#volumenMaquinaria').value=''; $('#volumenAplicacion').value='';
+  $('#cuartel').value=''; $('#indicaciones').value='';
+  $('#items tbody').innerHTML=''; addItem();
+  syncPrint(); updateFactorChip(); applyManejoTheme();
+  $('#oc').value=String(await getNextOC()).padStart(6,'0');
+});
+
+/* ===================== INIT ===================== */
+(async function init(){
+  storageBadge.textContent='Inicializando almacenamiento…';
+  await openDB();
+  if(idbOk&&db){ storageBadge.style.background='#34d399'; storageBadge.textContent='Almacenamiento: IndexedDB'; }
+  else{ storageBadge.style.background='#60a5fa'; storageBadge.textContent='Almacenamiento: localStorage'; if(lsGet(LS_KEYS.recetas)==null) lsSet(LS_KEYS.recetas, []); if(lsGet(LS_KEYS.settings)==null) lsSet(LS_KEYS.settings, { nextOC:1 }); if(lsGet(LS_KEYS.catalogo)==null) lsSet(LS_KEYS.catalogo, []); }
+
+  if(idbOk){ const cur=await getSetting('nextOC'); if(cur==null) await setNextOC(1); }
+  await recomputeNextOC(); $('#oc').value=String(await getNextOC()).padStart(6,'0');
+  if(!$('#fecha').value) $('#fecha').value=todayISO();
+  if($('#items tbody').children.length===0) addItem();
+  await refreshDatalist(); syncPrint(); updateFactorChip(); applyManejoTheme();
+
+  const { data:{ session } } = await supa.auth.getSession();
+  uiAuth(!!session);
+  if(session) setCloudBadge('conectado');
+  await exchangeIfNeeded();
+  const { data:{ session: s2 } } = await supa.auth.getSession();
+  uiAuth(!!s2);
+  setCloudBadge(s2 ? 'conectado' : 'desconectado');
+
+  supa.auth.onAuthStateChange((_e, s)=> { uiAuth(!!s); setCloudBadge(s ? 'conectado' : 'desconectado'); });
+
+  $('#volumenMaquinaria')?.addEventListener('input', recalcDosisMaquinada);
+  $('#volumenAplicacion')?.addEventListener('input', recalcDosisMaquinada);
+})();
+  </script>
+</body>
+</html>
