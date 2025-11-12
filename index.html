@@ -310,22 +310,21 @@
 
   <!-- 🔧 CONFIGURACIÓN SUPABASE con selector PROD/DEV -->
   <script>
-    // Detecta automáticamente si estás en producción (Vercel o dominio propio)
     const isProd =
       location.hostname.endsWith(".vercel.app") ||
-      location.hostname === "TU-DOMINIO.com"; // ← COMPLETAR si vas a usar dominio propio
+      location.hostname === "TU-DOMINIO.com"; // opcional: reemplazar si usás dominio propio
 
     const SUPABASE_URL = isProd
-      ? "https://xgrkthluicphjqaorxsz.supabase.co"   // ← COMPLETAR: URL PROD
-      : "https://xgrkthluicphjqaorxsz.supabase.co";   // ← COMPLETAR (o repetir PROD)
+      ? "https://xgrkthluicphjqaorxsz.supabase.co"
+      : "https://xgrkthluicphjqaorxsz.supabase.co";
 
     const SUPABASE_ANON_KEY = isProd
-      ? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo"                       // ← COMPLETAR: ANON KEY PROD
-      : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo";                       // ← COMPLETAR (o repetir PROD)
+      ? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo"
+      : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo";
 
     const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // Helper badge nube
+    // Badge nube
     const cloudBadge=document.getElementById('cloudStatus');
     function setCloudBadge(state){
       if(state==='conectado'){ cloudBadge.style.background='#34d399'; cloudBadge.textContent='Nube: conectado'; }
@@ -612,6 +611,66 @@ async function supaDeleteOrderByOC(oc){
   if(error) throw error;
 }
 
+/* ¿hay sesión? */
+async function supaHasSession(){
+  try {
+    const { data:{ session } } = await supa.auth.getSession();
+    return !!session;
+  } catch {
+    return false;
+  }
+}
+
+/* Traer TODAS las órdenes del usuario logueado (nube) y mapear a formato local */
+async function supaFetchAllOrders(){
+  const { data:{ user } } = await supa.auth.getUser();
+  if(!user) return [];
+  const { data: orders, error } = await supa
+    .from('order_cura')
+    .select('id, oc, fecha, finca, cultivo, manejo, tecnico, tractorista, tractor, maquinaria, vol_maquinaria, vol_aplicacion, cuartel, indicaciones, updated_at')
+    .order('updated_at', { ascending:false });
+  if(error){
+    console.warn('supaFetchAllOrders error:', error.message);
+    return [];
+  }
+
+  const out = [];
+  for(const o of (orders || [])){
+    const { data: items } = await supa
+      .from('order_item')
+      .select('producto, ia, presentacion, dosis_ha, dosis_maquinada, obs')
+      .eq('order_id', o.id);
+
+    out.push({
+      __source: 'cloud',
+      __cloud_id: o.id,
+      oc: o.oc,
+      fecha: o.fecha,
+      finca: o.finca,
+      cultivo: o.cultivo,
+      manejo: o.manejo,
+      tecnico: o.tecnico || '',
+      tractorista: o.tractorista || '',
+      tractor: o.tractor || '',
+      maquinaria: o.maquinaria || '',
+      volumenMaquinaria: o.vol_maquinaria || '',
+      volumenAplicacion: o.vol_aplicacion || '',
+      cuartel: o.cuartel || '',
+      indicaciones: o.indicaciones || '',
+      items: (items || []).map(it => ({
+        producto: it.producto || '',
+        ingredienteActivo: it.ia || '',
+        presentacion: it.presentacion || '',
+        dosisHa: it.dosis_ha || '',
+        dosisMaquinada: it.dosis_maquinada || '',
+        obs: it.obs || ''
+      })),
+      updated_at: o.updated_at
+    });
+  }
+  return out;
+}
+
 /* Pull incremental y merge (last-write-wins) */
 async function supaPullSince(ts){
   const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return { pulled:0 };
@@ -668,52 +727,105 @@ $('#btnSync').addEventListener('click', syncNow);
 function openModal(){ $('#modal').classList.add('open'); }
 function closeModal(){ $('#modal').classList.remove('open'); }
 
+/* >>> NUEVA versión que fusiona nube + local e importa de nube <<< */
 async function refreshListado(){
-  const data=await listRecetas();
-  const q=($('#q')?.value||'').trim().toLowerCase();
-  const fil=data.filter(r=>{
+  // 1) Local
+  const local = await listRecetas();
+
+  // 2) Nube (si hay sesión)
+  let cloud = [];
+  if(await supaHasSession()){
+    try{
+      setCloudBadge('sincronizando');
+      cloud = await supaFetchAllOrders();
+      setCloudBadge('conectado');
+    }catch(e){
+      console.warn('No se pudo traer nube:', e?.message||e);
+      setCloudBadge('error');
+    }
+  }
+
+  // 3) Fusionar por OC (prioriza local si existe)
+  const byOC = new Map();
+  for(const r of local){ byOC.set(String(r.oc), { ...r, __source:'local' }); }
+  for(const r of cloud){ const k=String(r.oc); if(!byOC.has(k)) byOC.set(k, r); }
+
+  const fusion = Array.from(byOC.values())
+    .sort((a,b)=> Number((b.oc||'').replace(/^0+/,'')) - Number((a.oc||'').replace(/^0+/,'')));
+
+  // 4) Filtro
+  const q = ($('#q')?.value||'').trim().toLowerCase();
+  const fil = fusion.filter(r=>{
     const hay=(s)=> (s||'').toString().toLowerCase().includes(q);
     return !q || hay(r.finca) || hay(r.cultivo) || hay(r.oc) || hay(r.tecnico);
   });
-  const tbody=$('#tablaListado tbody'); tbody.innerHTML='';
+
+  // 5) Render
+  const tbody = $('#tablaListado tbody'); tbody.innerHTML='';
   for(const r of fil){
-    const tr=document.createElement('tr');
-    tr.innerHTML=`
-      <td>${r.oc||''}</td>
+    const fuente = r.__source==='cloud' ? '☁️' : '💾';
+    const idAttr = r.id!=null ? `data-id="${r.id}"` : '';
+    const ocAttr = r.oc ? `data-oc="${r.oc}"` : '';
+    const cloudIdAttr = r.__cloud_id!=null ? `data-cloud-id="${r.__cloud_id}"` : '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.oc||''} ${fuente}</td>
       <td>${r.fecha||''}</td>
       <td>${r.finca||''}</td>
       <td>${r.cultivo||''}</td>
       <td>${r.tecnico||''}</td>
       <td>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn small light" data-act="cargar" data-id="${r.id}">Cargar</button>
-          <button class="btn small warning" data-act="pdf" data-id="${r.id}">PDF</button>
-          <button class="btn small danger" data-act="eliminar" data-id="${r.id}" data-oc="${r.oc}">Eliminar</button>
+          <button class="btn small light" data-act="cargar" ${idAttr} ${ocAttr} ${cloudIdAttr}>Cargar</button>
+          <button class="btn small warning" data-act="pdf" ${idAttr} ${ocAttr} ${cloudIdAttr}>PDF</button>
+          <button class="btn small danger" data-act="eliminar" ${idAttr} ${ocAttr} ${cloudIdAttr}>Eliminar</button>
+          <button class="btn small light" data-act="importar" ${idAttr} ${ocAttr} ${cloudIdAttr} ${r.__source==='cloud'?'':'disabled'}>Importar de nube</button>
         </div>
       </td>`;
     tbody.appendChild(tr);
   }
 
-  tbody.querySelectorAll('button[data-id]').forEach(btn=>{
-    btn.addEventListener('click', async (ev)=>{
-      const id=Number(btn.getAttribute('data-id'));
-      const act=btn.getAttribute('data-act');
-      const r=await getReceta(id); if(!r) return;
+  // 6) Acciones
+  tbody.querySelectorAll('button[data-act]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const act = btn.getAttribute('data-act');
+      const oc  = btn.getAttribute('data-oc') || '';
+      const id  = btn.getAttribute('data-id');
+      const cloudId = btn.getAttribute('data-cloud-id');
+      const reg = fil.find(x => String(x.oc) === String(oc));
+      if(!reg) return;
+
       if(act==='cargar'){
-        setFormFromReceta(r); closeModal();
-      }else if(act==='pdf'){
-        await printOrderByData(r);
-      }else if(act==='eliminar'){
-        const oc=btn.getAttribute('data-oc')||r.oc;
+        setFormFromReceta(reg); closeModal();
+      }
+      else if(act==='pdf'){
+        await printOrderByData(reg);
+      }
+      else if(act==='eliminar'){
         const sure=confirm(`Vas a eliminar la OC ${oc}. ¿Continuar?`);
         if(!sure) return;
         try{
-          await deleteRecetaLocal(id);
-          try{ await supaDeleteOrderByOC(oc); }catch(_e){}
+          if(id) await deleteRecetaLocal(Number(id));
+          try{ if(await supaHasSession()) await supaDeleteOrderByOC(oc); }catch(_e){}
           await refreshListado();
           alert(`OC ${oc} eliminada.`);
         }catch(err){
           alert('Error eliminando: '+(err.message||err));
+        }
+      }
+      else if(act==='importar'){
+        if(reg.__source!=='cloud'){ alert('Esta fila ya es local.'); return; }
+        try{
+          const locals = await listRecetas();
+          const hit = locals.find(r=> String(r.oc)===String(reg.oc));
+          const copia = { ...reg };
+          delete copia.id; delete copia.__source; delete copia.__cloud_id;
+          const savedId = await saveReceta(hit ? { ...copia, id:hit.id } : copia);
+          await recomputeNextOC();
+          alert(`OC ${oc} importada en local (ID ${savedId}).`);
+          await refreshListado();
+        }catch(e){
+          alert('No se pudo importar: '+(e?.message||e));
         }
       }
     });
@@ -785,7 +897,7 @@ $('#btnGuardar').addEventListener('click', async ()=>{
   }catch(err){ console.error(err); setCloudBadge('error'); }
 });
 
-/* --- PDF de una OC específica (sin tocar el formulario) --- */
+/* --- PDF directo de una OC (sin tocar el form) --- */
 async function printOrderByData(r){
   const snap = currentFormData();
   const metaHTML = buildMetaHTML({
@@ -848,4 +960,5 @@ $('#btnNueva').addEventListener('click', async ()=>{
   </script>
 </body>
 </html>
+
 
