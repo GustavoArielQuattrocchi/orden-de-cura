@@ -70,7 +70,6 @@
     .paper table{ border:1px solid #e5e7eb } .paper thead th{ background:#f3f4f6; color:#0b1222 }
     .paper tbody td{ border-top:1px solid #e5e7eb }
 
-    /* --------- PDF: Solo imprime #printArea ---------- */
     @media print {
       @page { size: A4; margin: 14mm; }
       body { background:#ffffff !important; }
@@ -110,7 +109,7 @@
       <input id="restoreFile" type="file" accept=".json,application/json" style="display:none" />
       <button class="btn light" id="btnLogin">Iniciar sesión</button>
       <button class="btn light" id="btnLogout" style="display:none">Cerrar sesión</button>
-      <button class="btn light" id="btnSync" title="Forzar sincronización">Sync ahora</button>
+      <button class="btn light" id="btnSync" title="Forzar sincronización (Shift = Full)">Sync ahora</button>
     </div>
   </header>
 
@@ -527,8 +526,15 @@ function syncPrint(){
 async function saveReceta(receta){
   let ocNum = Number((receta.oc||'').toString().replace(/^0+/, '')) || 0;
   if(ocNum <= 0){ ocNum = await getNextOC(); receta.oc = String(ocNum).padStart(6,'0'); }
-  if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; if(arr.some(r=> String(r.oc)===String(receta.oc))){ alert('Ya existe una orden con ese N° OC. Cambiá el OC.'); throw new Error('OC collision'); } receta.id=(arr.reduce((m,r)=>Math.max(m, r.id||0),0)+1); arr.push(receta); lsSet(LS_KEYS.recetas,arr); }
-  else{ await idbPut('recetas', receta); }
+  if(!idbOk){
+    const arr=lsGet(LS_KEYS.recetas)||[];
+    if(arr.some(r=> String(r.oc)===String(receta.oc))){ alert('Ya existe una orden con ese N° OC. Cambiá el OC.'); throw new Error('OC collision'); }
+    receta.id=(arr.reduce((m,r)=>Math.max(m, r.id||0),0)+1);
+    arr.push(receta);
+    lsSet(LS_KEYS.recetas,arr);
+  } else {
+    await idbPut('recetas', receta);
+  }
   const cur=await getNextOC(); const prop=ocNum+1; if(prop>cur) await setNextOC(prop);
   return receta.id||receta.oc;
 }
@@ -578,10 +584,21 @@ async function exchangeIfNeeded(){
   }
 }
 
-/* Upsert nube */
+/* Helpers auth */
+async function supaHasSession(){
+  try {
+    const { data:{ session } } = await supa.auth.getSession();
+    return !!session;
+  } catch {
+    return false;
+  }
+}
+
+/* Upsert nube (corregido getUser) */
 async function supaUpsertOrder(rec){
-  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return; // sin login, no sube
-  const owner_id = user.user.id;
+  const { data: { user } } = await supa.auth.getUser();
+  if(!user) return; // sin login, no sube
+  const owner_id = user.id;
   const payload = {
     oc: rec.oc, fecha: rec.fecha, finca: rec.finca, cultivo: rec.cultivo, manejo: rec.manejo,
     tecnico: rec.tecnico||null, tractorista: rec.tractorista||null, tractor: rec.tractor||null,
@@ -591,6 +608,7 @@ async function supaUpsertOrder(rec){
   };
   const { data: up, error: e1 } = await supa.from('order_cura').upsert(payload, { onConflict:'oc,owner_id' }).select().single();
   if(e1) throw e1;
+
   const order_id = up.id;
   await supa.from('order_item').delete().eq('order_id', order_id);
   if((rec.items||[]).length){
@@ -604,21 +622,12 @@ async function supaUpsertOrder(rec){
   }
 }
 
-/* Delete nube por OC */
+/* Delete nube por OC (corregido getUser) */
 async function supaDeleteOrderByOC(oc){
-  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return;
+  const { data: { user } } = await supa.auth.getUser();
+  if(!user) return;
   const { error } = await supa.from('order_cura').delete().eq('oc', oc);
   if(error) throw error;
-}
-
-/* ¿hay sesión? */
-async function supaHasSession(){
-  try {
-    const { data:{ session } } = await supa.auth.getSession();
-    return !!session;
-  } catch {
-    return false;
-  }
 }
 
 /* Traer TODAS las órdenes del usuario logueado (nube) y mapear a formato local */
@@ -633,14 +642,12 @@ async function supaFetchAllOrders(){
     console.warn('supaFetchAllOrders error:', error.message);
     return [];
   }
-
   const out = [];
   for(const o of (orders || [])){
     const { data: items } = await supa
       .from('order_item')
       .select('producto, ia, presentacion, dosis_ha, dosis_maquinada, obs')
       .eq('order_id', o.id);
-
     out.push({
       __source: 'cloud',
       __cloud_id: o.id,
@@ -671,13 +678,15 @@ async function supaFetchAllOrders(){
   return out;
 }
 
-/* Pull incremental y merge (last-write-wins) */
+/* Pull incremental y merge (last-write-wins) – corregido getUser */
 async function supaPullSince(ts){
-  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return { pulled:0 };
+  const { data: { user } } = await supa.auth.getUser();
+  if(!user) return { pulled:0 };
   const { data: orders, error } = await supa.from('order_cura')
     .select('id, oc, fecha, finca, cultivo, manejo, tecnico, tractorista, tractor, maquinaria, vol_maquinaria, vol_aplicacion, cuartel, indicaciones, updated_at')
     .gte('updated_at', ts).order('updated_at',{ascending:true});
   if(error) throw error;
+
   let pulled=0;
   for(const o of (orders||[])){
     const { data: items } = await supa.from('order_item').select('producto, ia, presentacion, dosis_ha, dosis_maquinada, obs').eq('order_id', o.id);
@@ -696,15 +705,39 @@ async function supaPullSince(ts){
   return { pulled };
 }
 
-async function syncNow(){
+/* Merge helper: fusiona lista cloud dentro de local */
+async function mergeCloudListIntoLocal(list){
+  for(const r of (list||[])){
+    const locals = await listRecetas();
+    const hit = locals.find(x=> String(x.oc)===String(r.oc));
+    const copia = { ...r };
+    delete copia.id; delete copia.__source; delete copia.__cloud_id;
+    if(hit) copia.id = hit.id;
+    await saveReceta(copia);
+  }
+  await recomputeNextOC();
+}
+
+/* Sync robusto: incremental + (opcional) full */
+async function syncNow({full=false}={}){
   setCloudBadge('sincronizando');
   try{
-    const ts = await getLastSync();
+    const ts = full ? '1970-01-01T00:00:00Z' : await getLastSync();
     const { pulled } = await supaPullSince(ts);
+
+    if (full || pulled === 0) {
+      const all = await supaFetchAllOrders();
+      await mergeCloudListIntoLocal(all);
+    }
+
     await setLastSync(new Date().toISOString());
-    alert(`Sync OK. Registros nuevos/actualizados: ${pulled}.`);
+    alert(`Sync OK. Actualizadas: ${pulled}${full?' (full)':''}.`);
     setCloudBadge('conectado');
-  }catch(err){ console.error(err); alert('Error de sincronización: '+(err.message||err)); setCloudBadge('error'); }
+  }catch(err){
+    console.error(err);
+    alert('Error de sincronización: '+(err.message||err));
+    setCloudBadge('error');
+  }
 }
 
 /* ===================== Eventos UI ===================== */
@@ -721,18 +754,16 @@ document.addEventListener('input', (e)=>{
 $('#addItem').addEventListener('click', ()=> addItem() );
 $('#clearItems').addEventListener('click', ()=> { $('#items tbody').innerHTML=''; addItem(); syncPrint(); recalcDosisMaquinada(); });
 $('#btnPDF').addEventListener('click', ()=>{ syncPrint(); window.print(); });
-$('#btnSync').addEventListener('click', syncNow);
+document.getElementById('btnSync').addEventListener('click', (e)=> syncNow({ full: e.shiftKey }));
 
 /* --- Listado (modal) --- */
 function openModal(){ $('#modal').classList.add('open'); }
 function closeModal(){ $('#modal').classList.remove('open'); }
 
-/* >>> NUEVA versión que fusiona nube + local e importa de nube <<< */
+/* >>> Fusiona nube + local e importa de nube si querés <<< */
 async function refreshListado(){
-  // 1) Local
   const local = await listRecetas();
 
-  // 2) Nube (si hay sesión)
   let cloud = [];
   if(await supaHasSession()){
     try{
@@ -745,7 +776,6 @@ async function refreshListado(){
     }
   }
 
-  // 3) Fusionar por OC (prioriza local si existe)
   const byOC = new Map();
   for(const r of local){ byOC.set(String(r.oc), { ...r, __source:'local' }); }
   for(const r of cloud){ const k=String(r.oc); if(!byOC.has(k)) byOC.set(k, r); }
@@ -753,14 +783,12 @@ async function refreshListado(){
   const fusion = Array.from(byOC.values())
     .sort((a,b)=> Number((b.oc||'').replace(/^0+/,'')) - Number((a.oc||'').replace(/^0+/,'')));
 
-  // 4) Filtro
   const q = ($('#q')?.value||'').trim().toLowerCase();
   const fil = fusion.filter(r=>{
     const hay=(s)=> (s||'').toString().toLowerCase().includes(q);
     return !q || hay(r.finca) || hay(r.cultivo) || hay(r.oc) || hay(r.tecnico);
   });
 
-  // 5) Render
   const tbody = $('#tablaListado tbody'); tbody.innerHTML='';
   for(const r of fil){
     const fuente = r.__source==='cloud' ? '☁️' : '💾';
@@ -785,13 +813,11 @@ async function refreshListado(){
     tbody.appendChild(tr);
   }
 
-  // 6) Acciones
   tbody.querySelectorAll('button[data-act]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const act = btn.getAttribute('data-act');
       const oc  = btn.getAttribute('data-oc') || '';
       const id  = btn.getAttribute('data-id');
-      const cloudId = btn.getAttribute('data-cloud-id');
       const reg = fil.find(x => String(x.oc) === String(oc));
       if(!reg) return;
 
@@ -960,5 +986,6 @@ $('#btnNueva').addEventListener('click', async ()=>{
   </script>
 </body>
 </html>
+
 
 
