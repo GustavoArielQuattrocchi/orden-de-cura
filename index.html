@@ -72,6 +72,7 @@
     .paper table{ border:1px solid #e5e7eb } .paper thead th{ background:#f3f4f6; color:#0b1222 }
     .paper tbody td{ border-top:1px solid #e5e7eb }
 
+    /* --------- PDF: Solo imprime #printArea ---------- */
     @media print {
       @page { size: A4; margin: 14mm; }
       body { background:#ffffff !important; }
@@ -90,6 +91,7 @@
       .no-print { display: none !important; }
     }
 
+    /* Badges */
     #storageStatus, #cloudStatus{
       position:fixed; right:10px; padding:6px 10px; border-radius:10px; font:600 12px system-ui; color:#0b1222; z-index:9999; opacity:.9
     }
@@ -314,11 +316,11 @@
   <script>
     const isProd =
       location.hostname.endsWith(".vercel.app") ||
-      location.hostname === "TU-DOMINIO.com";
+      location.hostname === "TU-DOMINIO.com"; // opcional: reemplazar si usás dominio propio
 
     const SUPABASE_URL = isProd
       ? "https://xgrkthluicphjqaorxsz.supabase.co"  // PROD
-      : "https://xgrkthluicphjqaorxsz.supabase.co"; // DEV
+      : "https://xgrkthluicphjqaorxsz.supabase.co"; // DEV (puede ser el mismo)
 
     const SUPABASE_ANON_KEY = isProd
       ? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo"
@@ -326,6 +328,7 @@
 
     const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // Badge nube
     const cloudBadge=document.getElementById('cloudStatus');
     function setCloudBadge(state){
       if(state==='conectado'){ cloudBadge.style.background='#34d399'; cloudBadge.textContent='Nube: conectado'; }
@@ -338,7 +341,7 @@
   <!-- ⚙️ Lógica completa (IndexedDB, catálogo, UI, sync, etc.) -->
   <script>
 /* ===================== Config local ===================== */
-const DB_NAME='RecetaDigitalDB', DB_VERSION=10;
+const DB_NAME='RecetaDigitalDB', DB_VERSION=11; // versión nueva
 let db=null, idbOk=true;
 
 /* ====== Badges ====== */
@@ -366,21 +369,43 @@ function lsSet(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); return tru
 function openDB(){
   return new Promise((resolve)=>{
     if(!('indexedDB' in window)){ idbOk=false; resolve(null); return; }
-    const req=indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded=(e)=>{
-      const udb=e.target.result;
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+
+    req.onupgradeneeded = (e)=>{
+      const udb = e.target.result;
+
+      // Store principal
       let recetas;
-      if(!udb.objectStoreNames.contains('recetas')) recetas=udb.createObjectStore('recetas',{keyPath:'id',autoIncrement:true});
-      else recetas=req.transaction.objectStore('recetas');
-      if(!recetas.indexNames.contains('by_oc')) recetas.createIndex('by_oc','oc',{unique:false});
-      if(!udb.objectStoreNames.contains('settings')) udb.createObjectStore('settings',{keyPath:'key'});
+      if(!udb.objectStoreNames.contains('recetas')){
+        recetas = udb.createObjectStore('recetas',{ keyPath:'id', autoIncrement:true });
+      }else{
+        recetas = req.transaction.objectStore('recetas');
+      }
+
+      // 🔧 MIGRACIÓN: eliminar índice antiguo by_oc si existía y recrear índices robustos
+      try{
+        if(recetas.indexNames.contains('by_oc')){
+          recetas.deleteIndex('by_oc'); // quitamos el problemático
+        }
+      }catch(_e){ /* ignorar */ }
+
+      // Índice compuesto: FINCA+OC (único por finca)
+      if(!recetas.indexNames.contains('by_finca_oc')){
+        recetas.createIndex('by_finca_oc', ['finca','oc'], { unique:true });
+      }
+
+      // Otros stores
+      if(!udb.objectStoreNames.contains('settings')){
+        udb.createObjectStore('settings',{ keyPath:'key' });
+      }
       if(!udb.objectStoreNames.contains('catalogo')){
         const cat=udb.createObjectStore('catalogo',{keyPath:'producto'});
         cat.createIndex('by_producto','producto',{unique:true});
       }
     };
-    req.onsuccess=(e)=>{ db=e.target.result; resolve(db); };
-    req.onerror=()=>{ idbOk=false; resolve(null); };
+
+    req.onsuccess = (e)=>{ db=e.target.result; resolve(db); };
+    req.onerror   = ()=>{ idbOk=false; resolve(null); };
   });
 }
 function tx(name,mode='readonly'){ return db.transaction(name,mode).objectStore(name); }
@@ -399,11 +424,15 @@ async function setSetting(key,val){
   await idbPut('settings',{key,value:val}); return true;
 }
 
-/* Contadores por FINCA */
+/* Contadores por FINCA: guardamos un mapa { FOA: 17, FLP: 5, ... } */
 const NEXT_MAP_KEY = 'nextOCMap';
 
-async function getNextOCMap(){ return (await getSetting(NEXT_MAP_KEY)) || {}; }
-async function setNextOCMap(map){ await setSetting(NEXT_MAP_KEY, map||{}); }
+async function getNextOCMap(){
+  return (await getSetting(NEXT_MAP_KEY)) || {};
+}
+async function setNextOCMap(map){
+  await setSetting(NEXT_MAP_KEY, map||{});
+}
 async function getNextOCForFinca(finca){
   const map = await getNextOCMap();
   const key = String(finca||'').trim().toUpperCase();
@@ -447,7 +476,7 @@ async function recomputeAllFincasNextOC(){
 async function getLastSync(){ return await getSetting('lastSync') || '1970-01-01T00:00:00Z'; }
 async function setLastSync(ts){ await setSetting('lastSync', ts || new Date().toISOString()); }
 
-/* Sugerencia de OC por FINCA + visible */
+/* Sugerencia de OC por FINCA + refresco de visible */
 async function suggestOCForCurrentFinca(){
   const finca = $('#finca').value;
   const ocVis = $('#ocVisible');
@@ -456,6 +485,7 @@ async function suggestOCForCurrentFinca(){
     ocVis.textContent = '—';
     return;
   }
+  // aseguro coherencia si hay datos cargados
   await recomputeNextOCForFinca(finca);
   const n = await getNextOCForFinca(finca);
   const raw = String(n).padStart(6, '0');
@@ -463,7 +493,7 @@ async function suggestOCForCurrentFinca(){
   ocVis.textContent = displayOC(finca, raw);
 }
 
-/* ===================== Catálogo ===================== */
+/* ===================== Catálogo (autocompletar) ===================== */
 async function catAll(){ if(!idbOk) return lsGet(LS_KEYS.catalogo)||[]; return await idbCursorAll('catalogo'); }
 async function catGet(producto){ if(!producto) return null; if(!idbOk){ const arr=lsGet(LS_KEYS.catalogo)||[]; return arr.find(x=>(x.producto||'').toLowerCase()===producto.toLowerCase())||null; } return await idbGet('catalogo',producto); }
 async function catUpsert(entry){
@@ -601,10 +631,12 @@ function syncPrint(){
 
 /* ===================== CRUD local ===================== */
 async function saveReceta(receta){
+  // oc por finca
   const fincaKey = String(receta.finca||'').trim().toUpperCase();
   let ocNum = Number((receta.oc||'').toString().replace(/^0+/, '')) || 0;
 
   if(ocNum <= 0){
+    // asigno el próximo de esa finca
     await recomputeNextOCForFinca(fincaKey);
     const next = await getNextOCForFinca(fincaKey);
     ocNum = next;
@@ -613,6 +645,7 @@ async function saveReceta(receta){
 
   if(!idbOk){
     const arr=lsGet(LS_KEYS.recetas)||[];
+    // permitimos mismo oc en otra finca: colisión sólo si misma finca+oc
     if(arr.some(r=> String(r.oc)===String(receta.oc) && String(r.finca||'').trim().toUpperCase()===fincaKey)){
       alert('Ya existe una orden con ese N° OC para esta FINCA. Cambiá el OC.');
       throw new Error('OC collision por finca');
@@ -621,9 +654,11 @@ async function saveReceta(receta){
     arr.push(receta);
     lsSet(LS_KEYS.recetas,arr);
   } else {
+    // sin restricción única en IDB, control ya hecho arriba
     await idbPut('recetas', receta);
   }
 
+  // avanzar next para esa finca
   const cur=await getNextOCForFinca(fincaKey);
   const prop=ocNum+1;
   if(prop>cur) await setNextOCForFinca(fincaKey, prop);
@@ -643,8 +678,7 @@ async function listRecetas(){
   return recs.sort((a,b)=>{
     const fa=String(a.finca||'').localeCompare(String(b.finca||''));
     if(fa!==0) return fa;
-    return Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,''));
-  });
+    return Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,'')); });
 }
 async function getReceta(id){
   if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; return arr.find(r=> Number(r.id)===Number(id))||null; }
@@ -694,73 +728,41 @@ async function exchangeIfNeeded(){
   }
 }
 
-/* Upsert nube (corrige getUser y exige FINCA) */
+/* Upsert nube (owner_id, finca, oc) */
 async function supaUpsertOrder(rec){
-  const { data: { user }, error: authErr } = await supa.auth.getUser();
-  if (authErr) throw authErr;
-  if (!user) throw new Error('No hay sesión activa. Iniciá sesión para sincronizar.');
-  if (!rec.finca) throw new Error('FINCA es obligatoria para sincronizar.');
-
-  const owner_id = user.id;
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return; // sin login, no sube
+  const owner_id = user.user.id;
   const payload = {
     owner_id,
-    oc: rec.oc,
-    fecha: rec.fecha || null,
-    finca: rec.finca,
-    cultivo: rec.cultivo || null,
-    manejo: rec.manejo || null,
-    tecnico: rec.tecnico || null,
-    tractorista: rec.tractorista || null,
-    tractor: rec.tractor || null,
-    maquinaria: rec.maquinaria || null,
-    vol_maquinaria: rec.volumenMaquinaria ? Number(rec.volumenMaquinaria) : null,
-    vol_aplicacion: rec.volumenAplicacion ? Number(rec.volumenAplicacion) : null,
-    cuartel: rec.cuartel || null,
-    indicaciones: rec.indicaciones || null,
-    updated_at: new Date().toISOString()
+    oc: rec.oc, fecha: rec.fecha, finca: rec.finca, cultivo: rec.cultivo, manejo: rec.manejo,
+    tecnico: rec.tecnico||null, tractorista: rec.tractorista||null, tractor: rec.tractor||null,
+    maquinaria: rec.maquinaria||null, vol_maquinaria: rec.volumenMaquinaria? Number(rec.volumenMaquinaria):null,
+    vol_aplicacion: rec.volumenAplicacion? Number(rec.volumenAplicacion):null, cuartel: rec.cuartel||null,
+    indicaciones: rec.indicaciones||null, updated_at: new Date().toISOString()
   };
-
   const { data: up, error: e1 } = await supa
     .from('order_cura')
-    .upsert(payload, { onConflict: 'owner_id,finca,oc' })
+    .upsert(payload, { onConflict:'owner_id,finca,oc' })
     .select()
     .single();
-
-  if (e1) throw e1;
-
+  if(e1) throw e1;
   const order_id = up.id;
-
-  const { error: delErr } = await supa.from('order_item').delete().eq('order_id', order_id);
-  if (delErr) throw delErr;
-
-  const items = Array.isArray(rec.items) ? rec.items : [];
-  if (items.length){
-    const batch = items.map(it => ({
+  await supa.from('order_item').delete().eq('order_id', order_id);
+  if((rec.items||[]).length){
+    const batch = rec.items.map(it=> ({
       order_id,
-      producto: it.producto || null,
-      ia: it.ingredienteActivo || null,
-      presentacion: it.presentacion || null,
-      dosis_ha: it.dosisHa || null,
-      dosis_maquinada: it.dosisMaquinada || null,
-      obs: it.obs || null
+      producto: it.producto||null, ia: it.ingredienteActivo||null, presentacion: it.presentacion||null,
+      dosis_ha: it.dosisHa||null, dosis_maquinada: it.dosisMaquinada||null, obs: it.obs||null
     }));
-    const { error: insErr } = await supa.from('order_item').insert(batch);
-    if (insErr) throw insErr;
+    const { error: e2 } = await supa.from('order_item').insert(batch);
+    if(e2) throw e2;
   }
-
-  return order_id;
 }
 
-/* Delete nube por OC y FINCA, restringido al owner (RLS) */
-async function supaDeleteOrderByOC(oc, finca){
-  const { data: { user } } = await supa.auth.getUser();
-  if(!user) return;
-  const { error } = await supa
-    .from('order_cura')
-    .delete()
-    .eq('owner_id', user.id)
-    .eq('finca', finca)
-    .eq('oc', oc);
+/* Delete nube por (oc) — RLS limita al owner */
+async function supaDeleteOrderByOC(oc){
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return;
+  const { error } = await supa.from('order_cura').delete().eq('oc', oc);
   if(error) throw error;
 }
 
@@ -842,8 +844,7 @@ async function supaPullSince(ts){
       items:(items||[]).map(it=>({ producto:it.producto||'', ingredienteActivo:it.ia||'', presentacion:it.presentacion||'', dosisHa:it.dosis_ha||'', dosisMaquinada:it.dosis_maquinada||'', obs:it.obs||'' })),
       creadoEn:new Date().toISOString(), updated_at:o.updated_at
     };
-    const locals=await listRecetas();
-    const hit=locals.find(r=> String(r.oc)===String(receta.oc) && String(r.finca||'').trim().toUpperCase()===String(receta.finca||'').trim().toUpperCase());
+    const locals=await listRecetas(); const hit=locals.find(r=> String(r.oc)===String(receta.oc) && String(r.finca||'').trim().toUpperCase()===String(receta.finca||'').trim().toUpperCase());
     const remoteNewer = !hit || (new Date(o.updated_at).getTime() > new Date(hit.updated_at||0).getTime());
     if(remoteNewer){ if(hit) receta.id=hit.id; await saveReceta(receta); pulled++; }
   }
@@ -867,7 +868,7 @@ document.addEventListener('input', async (e)=>{
     syncPrint();
     if(e.target.matches('.it-dosisHa,#volumenMaquinaria,#volumenAplicacion,.it-presentacion')) recalcDosisMaquinada();
     if(e.target.id==='manejo') applyManejoTheme();
-    if(e.target.id==='finca'){ await suggestOCForCurrentFinca(); }
+    if(e.target.id==='finca'){ await suggestOCForCurrentFinca(); } // clave: cambia OC propuesto al cambiar FINCA
     if(e.target.id==='volumenMaquinaria'||e.target.id==='volumenAplicacion'){
       const v=num(e.target.value); e.target.setCustomValidity((!isFinite(v)||v<=0)?'Debe ser un número mayor que 0':'' );
     }
@@ -884,8 +885,10 @@ function closeModal(){ $('#modal').classList.remove('open'); }
 
 /* Fusión nube + local e importación */
 async function refreshListado(){
+  // 1) Local
   const local = await listRecetas();
 
+  // 2) Nube (si hay sesión)
   let cloud = [];
   if(await supaHasSession()){
     try{
@@ -898,6 +901,7 @@ async function refreshListado(){
     }
   }
 
+  // 3) Fusionar por FINCA+OC (prioriza local si existe)
   const byKey = new Map();
   for(const r of local){
     const k = `${String(r.finca||'').trim().toUpperCase()}|${String(r.oc)}`;
@@ -915,12 +919,14 @@ async function refreshListado(){
       return Number((b.oc||'').replace(/^0+/,'')) - Number((a.oc||'').replace(/^0+/,''));
     });
 
+  // 4) Filtro
   const q = ($('#q')?.value||'').trim().toLowerCase();
   const fil = fusion.filter(r=>{
     const hay=(s)=> (s||'').toString().toLowerCase().includes(q);
     return !q || hay(r.finca) || hay(r.cultivo) || hay(r.oc) || hay(r.tecnico);
   });
 
+  // 5) Render
   const tbody = $('#tablaListado tbody'); tbody.innerHTML='';
   for(const r of fil){
     const fuente = r.__source==='cloud' ? '☁️' : '💾';
@@ -946,6 +952,7 @@ async function refreshListado(){
     tbody.appendChild(tr);
   }
 
+  // 6) Acciones
   tbody.querySelectorAll('button[data-act]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const act = btn.getAttribute('data-act');
@@ -966,7 +973,7 @@ async function refreshListado(){
         if(!sure) return;
         try{
           if(id) await deleteRecetaLocal(Number(id));
-          try{ if(await supaHasSession()) await supaDeleteOrderByOC(oc, finca); }catch(_e){}
+          try{ if(await supaHasSession()) await supaDeleteOrderByOC(oc); }catch(_e){}
           await refreshListado();
           alert(`OC ${displayOC(finca, oc)} eliminada.`);
         }catch(err){
@@ -1014,19 +1021,15 @@ $('#restoreFile').addEventListener('change', async (e)=>{
     const arr=Array.isArray(parsed)?parsed:(parsed.data||[]); const nextOCMap=parsed.nextOCMap; const cat=parsed.catalogo||[];
     if(!Array.isArray(arr)){ alert('Archivo inválido'); return; }
     if(!idbOk){
-      const curr=lsGet(LS_KEYS.recetas)||[];
-      arr.forEach(r=>{ const cp={...r}; delete cp.id; cp.id=(curr.reduce((m,x)=>Math.max(m,x.id||0),0)+1); curr.push(cp); });
-      lsSet(LS_KEYS.recetas,curr);
-      if(Array.isArray(cat)) lsSet(LS_KEYS.catalogo,cat);
-      if(nextOCMap && typeof nextOCMap==='object'){ const s=lsGet(LS_KEYS.settings)||{}; s[NEXT_MAP_KEY]=nextOCMap; lsSet(LS_KEYS.settings,s); }
+      const curr=lsGet(LS_KEYS.recetas)||[]; arr.forEach(r=>{ const cp={...r}; delete cp.id; cp.id=(curr.reduce((m,x)=>Math.max(m,x.id||0),0)+1); curr.push(cp); });
+      lsSet(LS_KEYS.recetas,curr); if(Array.isArray(cat)) lsSet(LS_KEYS.catalogo,cat); if(nextOCMap && typeof nextOCMap==='object'){ const s=lsGet(LS_KEYS.settings)||{}; s[NEXT_MAP_KEY]=nextOCMap; lsSet(LS_KEYS.settings,s); }
     }else{
       const store=tx('recetas','readwrite');
       await new Promise((resolve,reject)=>{
         let i=0; const putNext=()=>{ if(i>=arr.length){ resolve(); return; } const rec={...arr[i++]}; delete rec.id; const r=store.put(rec);
           r.onsuccess=putNext; r.onerror=()=>reject(r.error); }; putNext();
       });
-      for(const c of cat){ await idbPut('catalogo',c); }
-      if(nextOCMap && typeof nextOCMap==='object') await setNextOCMap(nextOCMap);
+      for(const c of cat){ await idbPut('catalogo',c); } if(nextOCMap && typeof nextOCMap==='object') await setNextOCMap(nextOCMap);
     }
     await recomputeAllFincasNextOC(); await refreshDatalist(); alert('Restauración completada.');
   }catch(err){ console.error(err); alert('Error al restaurar: '+err.message); }
@@ -1053,20 +1056,17 @@ $('#btnGuardar').addEventListener('click', async ()=>{
 
   try{
     const id = await saveReceta(receta);
+    // Aseguro que el visible quede coherente
     $('#oc').value = receta.oc;
     $('#ocVisible').textContent = displayOC(receta.finca, receta.oc);
     alert('Orden guardada localmente (ID '+id+'). Intentando sincronizar…');
-    await supaUpsertOrder(receta);
+    await supaUpsertOrder(receta); // nube
     await setLastSync(new Date().toISOString());
     setCloudBadge('conectado');
-  }catch(err){
-    console.error(err);
-    alert('Error al sincronizar con la nube: ' + (err?.message || err));
-    setCloudBadge('error');
-  }
+  }catch(err){ console.error(err); setCloudBadge('error'); alert('Error al sincronizar con la nube: '+(err.message||err)); }
 });
 
-/* --- PDF directo de una OC --- */
+/* --- PDF directo de una OC (sin tocar el form) --- */
 async function printOrderByData(r){
   const snap = currentFormData();
   const metaHTML = buildMetaHTML({
@@ -1112,6 +1112,7 @@ $('#btnNueva').addEventListener('click', async ()=>{
     if(lsGet(LS_KEYS.catalogo)==null) lsSet(LS_KEYS.catalogo, []);
   }
 
+  // Asegurar mapa de next por finca y recalcular de datos locales
   if(!(await getSetting(NEXT_MAP_KEY))) await setNextOCMap({});
   await recomputeAllFincasNextOC();
 
@@ -1119,8 +1120,10 @@ $('#btnNueva').addEventListener('click', async ()=>{
   if($('#items tbody').children.length===0) addItem();
   await refreshDatalist(); syncPrint(); updateFactorChip(); applyManejoTheme();
 
+  // si ya hay FINCA seleccionada (p.ej. al recargar), sugerir N°
   if($('#finca').value){ await suggestOCForCurrentFinca(); }
 
+  // Auth
   const { data:{ session } } = await supa.auth.getSession();
   uiAuth(!!session);
   if(session) setCloudBadge('conectado');
@@ -1137,6 +1140,7 @@ $('#btnNueva').addEventListener('click', async ()=>{
   </script>
 </body>
 </html>
+
 
 
 
