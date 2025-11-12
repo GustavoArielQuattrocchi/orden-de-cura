@@ -597,16 +597,27 @@ async function supaHasSession(){
 /* Upsert nube (corregido getUser) */
 async function supaUpsertOrder(rec){
   const { data: { user } } = await supa.auth.getUser();
-  if(!user) return; // sin login, no sube
+  if(!user) return;
   const owner_id = user.id;
+  const owner_email = user.email || null;
+  const owner_domain = owner_email ? owner_email.split('@')[1] : null;
+
   const payload = {
     oc: rec.oc, fecha: rec.fecha, finca: rec.finca, cultivo: rec.cultivo, manejo: rec.manejo,
     tecnico: rec.tecnico||null, tractorista: rec.tractorista||null, tractor: rec.tractor||null,
-    maquinaria: rec.maquinaria||null, vol_maquinaria: rec.volumenMaquinaria? Number(rec.volumenMaquinaria):null,
-    vol_aplicacion: rec.volumenAplicacion? Number(rec.volumenAplicacion):null, cuartel: rec.cuartel||null,
-    indicaciones: rec.indicaciones||null, owner_id, updated_at: new Date().toISOString()
+    maquinaria: rec.maquinaria||null,
+    vol_maquinaria: rec.volumenMaquinaria? Number(rec.volumenMaquinaria):null,
+    vol_aplicacion: rec.volumenAplicacion? Number(rec.volumenAplicacion):null,
+    cuartel: rec.cuartel||null, indicaciones: rec.indicaciones||null,
+    owner_id, owner_email, owner_domain,                 // 👈 nuevo
+    updated_at: new Date().toISOString()
   };
-  const { data: up, error: e1 } = await supa.from('order_cura').upsert(payload, { onConflict:'oc,owner_id' }).select().single();
+
+  const { data: up, error: e1 } = await supa
+    .from('order_cura')
+    .upsert(payload, { onConflict:'oc,owner_id' })
+    .select()
+    .single();
   if(e1) throw e1;
 
   const order_id = up.id;
