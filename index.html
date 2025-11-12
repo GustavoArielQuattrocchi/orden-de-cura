@@ -42,6 +42,8 @@
     input[type="number"]{ -webkit-appearance:none; appearance:none; }
     textarea{ min-height:72px; resize:vertical }
     .row{ display:grid; grid-template-columns: 1fr 1fr; gap:12px }
+    .hint{ font-size:.8rem; color:#9ca3af; margin-top:4px }
+    .badge{ display:inline-block; padding:4px 8px; border:1px dashed rgba(255,255,255,.25); border-radius:999px }
 
     .factor{
       display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
@@ -70,6 +72,7 @@
     .paper table{ border:1px solid #e5e7eb } .paper thead th{ background:#f3f4f6; color:#0b1222 }
     .paper tbody td{ border-top:1px solid #e5e7eb }
 
+    /* --------- PDF: Solo imprime #printArea ---------- */
     @media print {
       @page { size: A4; margin: 14mm; }
       body { background:#ffffff !important; }
@@ -109,7 +112,7 @@
       <input id="restoreFile" type="file" accept=".json,application/json" style="display:none" />
       <button class="btn light" id="btnLogin">Iniciar sesión</button>
       <button class="btn light" id="btnLogout" style="display:none">Cerrar sesión</button>
-      <button class="btn light" id="btnSync" title="Forzar sincronización (Shift = Full)">Sync ahora</button>
+      <button class="btn light" id="btnSync" title="Forzar sincronización">Sync ahora</button>
     </div>
   </header>
 
@@ -120,7 +123,9 @@
         <div class="row">
           <div>
             <label>N° OC (consecutivo)</label>
-            <input id="oc" type="text" readonly class="tbl-input" value="..." />
+            <input id="oc" type="text" readonly class="tbl-input" value="" />
+            <div class="hint">Se genera automáticamente según la FINCA.</div>
+            <div class="hint"><span class="badge">OC visible: <strong id="ocVisible">—</strong></span></div>
           </div>
           <div>
             <label>Fecha</label>
@@ -314,8 +319,8 @@
       location.hostname === "TU-DOMINIO.com"; // opcional: reemplazar si usás dominio propio
 
     const SUPABASE_URL = isProd
-      ? "https://xgrkthluicphjqaorxsz.supabase.co"
-      : "https://xgrkthluicphjqaorxsz.supabase.co";
+      ? "https://xgrkthluicphjqaorxsz.supabase.co"  // PROD
+      : "https://xgrkthluicphjqaorxsz.supabase.co"; // DEV (puede ser el mismo)
 
     const SUPABASE_ANON_KEY = isProd
       ? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhncmt0aGx1aWNwaGpxYW9yeHN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3OTMxODAsImV4cCI6MjA3ODM2OTE4MH0.EMWBxEGTzAoZnqZnCYW42AtI4V-4tG6HTtWxxm1BtQo"
@@ -336,7 +341,7 @@
   <!-- ⚙️ Lógica completa (IndexedDB, catálogo, UI, sync, etc.) -->
   <script>
 /* ===================== Config local ===================== */
-const DB_NAME='RecetaDigitalDB', DB_VERSION=9;
+const DB_NAME='RecetaDigitalDB', DB_VERSION=10; // ↑ versión para migrar si ya usabas 9
 let db=null, idbOk=true;
 
 /* ====== Badges ====== */
@@ -346,6 +351,14 @@ const storageBadge=document.getElementById('storageStatus');
 const $  =(s)=>document.querySelector(s);
 const $$ =(s)=>Array.from(document.querySelectorAll(s));
 function todayISO(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+
+/* === OC visible FINCA-OC === */
+function displayOC(finca, oc){
+  const f = String(finca||'').trim().toUpperCase();
+  const n = String(oc||'').trim();
+  if(!f || !n) return n || '—';
+  return `${f}-${n}`;
+}
 
 /* ===================== localStorage fallback ===================== */
 const LS_KEYS={ settings:'receta_settings', recetas:'receta_items', catalogo:'receta_catalogo' };
@@ -362,7 +375,7 @@ function openDB(){
       let recetas;
       if(!udb.objectStoreNames.contains('recetas')) recetas=udb.createObjectStore('recetas',{keyPath:'id',autoIncrement:true});
       else recetas=req.transaction.objectStore('recetas');
-      if(!recetas.indexNames.contains('by_oc')) recetas.createIndex('by_oc','oc',{unique:true});
+      if(!recetas.indexNames.contains('by_oc')) recetas.createIndex('by_oc','oc',{unique:false}); // no único global
       if(!udb.objectStoreNames.contains('settings')) udb.createObjectStore('settings',{keyPath:'key'});
       if(!udb.objectStoreNames.contains('catalogo')){
         const cat=udb.createObjectStore('catalogo',{keyPath:'producto'});
@@ -380,13 +393,83 @@ function idbDelete(store,key){ return new Promise((res,rej)=>{ try{ const r=tx(s
 function idbCursorAll(store){ return new Promise((res,rej)=>{ const out=[]; try{ const r=tx(store).openCursor(); r.onsuccess=(e)=>{ const c=e.target.result; if(c){out.push(c.value); c.continue();}else res(out); }; r.onerror=()=>rej(r.error);}catch(err){rej(err);} }); }
 
 /* ===================== Settings & consecutivo ===================== */
-async function getSetting(key){ if(!idbOk){ const s=lsGet(LS_KEYS.settings)||{}; return (key in s)?s[key]:null; } const row=await idbGet('settings',key); return row?row.value:null; }
-async function setSetting(key,val){ if(!idbOk){ const s=lsGet(LS_KEYS.settings)||{}; s[key]=val; return lsSet(LS_KEYS.settings,s);} await idbPut('settings',{key,value:val}); return true; }
-async function getNextOC(){ let n=await getSetting('nextOC'); if(n==null||isNaN(Number(n))) n=1; return Number(n); }
-async function setNextOC(n){ n=Math.max(1,Number(n)||1); await setSetting('nextOC',n); }
-async function recomputeNextOC(){ const all=await listRecetas(); const max=all.reduce((m,r)=>Math.max(m, Number((r.oc||'').replace(/^0+/,''))||0),0); const cur=await getNextOC(); if(max+1>cur) await setNextOC(max+1); }
+async function getSetting(key){
+  if(!idbOk){ const s=lsGet(LS_KEYS.settings)||{}; return (key in s)?s[key]:null; }
+  const row=await idbGet('settings',key); return row?row.value:null;
+}
+async function setSetting(key,val){
+  if(!idbOk){ const s=lsGet(LS_KEYS.settings)||{}; s[key]=val; return lsSet(LS_KEYS.settings,s); }
+  await idbPut('settings',{key,value:val}); return true;
+}
+
+/* Contadores por FINCA: guardamos un mapa { FOA: 17, FLP: 5, ... } */
+const NEXT_MAP_KEY = 'nextOCMap';
+
+async function getNextOCMap(){
+  return (await getSetting(NEXT_MAP_KEY)) || {};
+}
+async function setNextOCMap(map){
+  await setSetting(NEXT_MAP_KEY, map||{});
+}
+async function getNextOCForFinca(finca){
+  const map = await getNextOCMap();
+  const key = String(finca||'').trim().toUpperCase();
+  if(!key) return 1;
+  let n = map[key];
+  if(n==null || isNaN(Number(n))) n = 1;
+  return Number(n);
+}
+async function setNextOCForFinca(finca, n){
+  const map = await getNextOCMap();
+  const key = String(finca||'').trim().toUpperCase();
+  if(!key) return false;
+  map[key] = Math.max(1, Number(n)||1);
+  await setNextOCMap(map);
+  return true;
+}
+async function recomputeNextOCForFinca(finca){
+  const all=await listRecetas();
+  const key = String(finca||'').trim().toUpperCase();
+  const max = all
+    .filter(r => String(r.finca||'').trim().toUpperCase()===key)
+    .reduce((m,r)=>Math.max(m, Number((r.oc||'').replace(/^0+/,''))||0), 0);
+  const cur = await getNextOCForFinca(key);
+  if(max+1>cur) await setNextOCForFinca(key, max+1);
+}
+async function recomputeAllFincasNextOC(){
+  const all=await listRecetas();
+  const groups = new Map();
+  for(const r of all){
+    const k=String(r.finca||'').trim().toUpperCase();
+    const v=Number((r.oc||'').replace(/^0+/,''))||0;
+    groups.set(k, Math.max(groups.get(k)||0, v));
+  }
+  const map = await getNextOCMap();
+  for(const [k,max] of groups.entries()){
+    const cur = map[k]||1;
+    if(max+1>cur) map[k]=max+1;
+  }
+  await setNextOCMap(map);
+}
 async function getLastSync(){ return await getSetting('lastSync') || '1970-01-01T00:00:00Z'; }
 async function setLastSync(ts){ await setSetting('lastSync', ts || new Date().toISOString()); }
+
+/* Sugerencia de OC por FINCA + refresco de visible */
+async function suggestOCForCurrentFinca(){
+  const finca = $('#finca').value;
+  const ocVis = $('#ocVisible');
+  if(!finca){
+    $('#oc').value = '';
+    ocVis.textContent = '—';
+    return;
+  }
+  // aseguro coherencia si hay datos cargados
+  await recomputeNextOCForFinca(finca);
+  const n = await getNextOCForFinca(finca);
+  const raw = String(n).padStart(6, '0');
+  $('#oc').value = raw;
+  ocVis.textContent = displayOC(finca, raw);
+}
 
 /* ===================== Catálogo (autocompletar) ===================== */
 async function catAll(){ if(!idbOk) return lsGet(LS_KEYS.catalogo)||[]; return await idbCursorAll('catalogo'); }
@@ -481,8 +564,9 @@ function readItems(){
 
 /* ===================== Imprimible ===================== */
 function buildMetaHTML(data){
+  const ocShown = displayOC(data.finca, data.oc);
   const meta = [
-    ['OC', data.oc||'—'], ['Fecha', data.fecha||'—'], ['FINCA', data.finca||'—'],
+    ['OC', ocShown||'—'], ['Fecha', data.fecha||'—'], ['FINCA', data.finca||'—'],
     ['Cultivo', data.cultivo||'—'], ['Manejo', data.manejo||'—'],
     ['Maquinaria', data.maquinaria||'—'], ['Vol. maq.', data.volumenMaquinaria||'—'],
     ['Vol. apl.', data.volumenAplicacion||'—'], ['Cuartel/Lote', data.cuartel||'—'],
@@ -507,6 +591,7 @@ function setFormFromReceta(r){
   $('#volumenAplicacion').value=r.volumenAplicacion||''; $('#cuartel').value=r.cuartel||'';
   $('#indicaciones').value=r.indicaciones||'';
   $('#items tbody').innerHTML=''; (r.items||[]).forEach(addItem);
+  $('#ocVisible').textContent = displayOC(r.finca, r.oc);
   syncPrint(); recalcDosisMaquinada(); applyManejoTheme();
 }
 function syncPrint(){
@@ -524,22 +609,60 @@ function syncPrint(){
 
 /* ===================== CRUD local ===================== */
 async function saveReceta(receta){
+  // oc por finca
+  const fincaKey = String(receta.finca||'').trim().toUpperCase();
   let ocNum = Number((receta.oc||'').toString().replace(/^0+/, '')) || 0;
-  if(ocNum <= 0){ ocNum = await getNextOC(); receta.oc = String(ocNum).padStart(6,'0'); }
+
+  if(ocNum <= 0){
+    // asigno el próximo de esa finca
+    await recomputeNextOCForFinca(fincaKey);
+    const next = await getNextOCForFinca(fincaKey);
+    ocNum = next;
+    receta.oc = String(ocNum).padStart(6,'0');
+  }
+
   if(!idbOk){
     const arr=lsGet(LS_KEYS.recetas)||[];
-    if(arr.some(r=> String(r.oc)===String(receta.oc))){ alert('Ya existe una orden con ese N° OC. Cambiá el OC.'); throw new Error('OC collision'); }
+    // permitimos mismo oc en otra finca: colisión sólo si misma finca+oc
+    if(arr.some(r=> String(r.oc)===String(receta.oc) && String(r.finca||'').trim().toUpperCase()===fincaKey)){
+      alert('Ya existe una orden con ese N° OC para esta FINCA. Cambiá el OC.');
+      throw new Error('OC collision por finca');
+    }
     receta.id=(arr.reduce((m,r)=>Math.max(m, r.id||0),0)+1);
     arr.push(receta);
     lsSet(LS_KEYS.recetas,arr);
   } else {
+    // sin restricción única en IDB, control ya hecho arriba
     await idbPut('recetas', receta);
   }
-  const cur=await getNextOC(); const prop=ocNum+1; if(prop>cur) await setNextOC(prop);
+
+  // avanzar next para esa finca
+  const cur=await getNextOCForFinca(fincaKey);
+  const prop=ocNum+1;
+  if(prop>cur) await setNextOCForFinca(fincaKey, prop);
+
   return receta.id||receta.oc;
 }
-async function listRecetas(){ if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; return arr.sort((a,b)=>Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,''))); } const recs=await idbCursorAll('recetas'); return recs.sort((a,b)=>Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,''))); }
-async function getReceta(id){ if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; return arr.find(r=> Number(r.id)===Number(id))||null; } return await new Promise((res,rej)=>{ try{ const r=tx('recetas').get(id); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error);}catch(err){rej(err);} }); }
+async function listRecetas(){
+  if(!idbOk){
+    const arr=lsGet(LS_KEYS.recetas)||[];
+    return arr.sort((a,b)=>{
+      const fa=String(a.finca||'').localeCompare(String(b.finca||''));
+      if(fa!==0) return fa;
+      return Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,''));
+    });
+  }
+  const recs=await idbCursorAll('recetas');
+  return recs.sort((a,b)=>{
+    const fa=String(a.finca||'').localeCompare(String(b.finca||''));
+    if(fa!==0) return fa;
+    return Number((b.oc||'').replace(/^0+/,''))-Number((a.oc||'').replace(/^0+/,''));
+  });
+}
+async function getReceta(id){
+  if(!idbOk){ const arr=lsGet(LS_KEYS.recetas)||[]; return arr.find(r=> Number(r.id)===Number(id))||null; }
+  return await new Promise((res,rej)=>{ try{ const r=tx('recetas').get(id); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error);}catch(err){rej(err);} });
+}
 async function deleteRecetaLocal(id){
   if(!idbOk){
     let arr=lsGet(LS_KEYS.recetas)||[]; arr=arr.filter(r=> Number(r.id)!==Number(id)); lsSet(LS_KEYS.recetas,arr); return true;
@@ -584,42 +707,24 @@ async function exchangeIfNeeded(){
   }
 }
 
-/* Helpers auth */
-async function supaHasSession(){
-  try {
-    const { data:{ session } } = await supa.auth.getSession();
-    return !!session;
-  } catch {
-    return false;
-  }
-}
-
-/* Upsert nube (corregido getUser) */
+/* Upsert nube (owner_id, finca, oc) */
 async function supaUpsertOrder(rec){
-  const { data: { user } } = await supa.auth.getUser();
-  if(!user) return;
-  const owner_id = user.id;
-  const owner_email = user.email || null;
-  const owner_domain = owner_email ? owner_email.split('@')[1] : null;
-
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return; // sin login, no sube
+  const owner_id = user.user.id;
   const payload = {
+    owner_id,
     oc: rec.oc, fecha: rec.fecha, finca: rec.finca, cultivo: rec.cultivo, manejo: rec.manejo,
     tecnico: rec.tecnico||null, tractorista: rec.tractorista||null, tractor: rec.tractor||null,
-    maquinaria: rec.maquinaria||null,
-    vol_maquinaria: rec.volumenMaquinaria? Number(rec.volumenMaquinaria):null,
-    vol_aplicacion: rec.volumenAplicacion? Number(rec.volumenAplicacion):null,
-    cuartel: rec.cuartel||null, indicaciones: rec.indicaciones||null,
-    owner_id, owner_email, owner_domain,                 // 👈 nuevo
-    updated_at: new Date().toISOString()
+    maquinaria: rec.maquinaria||null, vol_maquinaria: rec.volumenMaquinaria? Number(rec.volumenMaquinaria):null,
+    vol_aplicacion: rec.volumenAplicacion? Number(rec.volumenAplicacion):null, cuartel: rec.cuartel||null,
+    indicaciones: rec.indicaciones||null, updated_at: new Date().toISOString()
   };
-
   const { data: up, error: e1 } = await supa
     .from('order_cura')
-    .upsert(payload, { onConflict:'oc,owner_id' })
+    .upsert(payload, { onConflict:'owner_id,finca,oc' })
     .select()
     .single();
   if(e1) throw e1;
-
   const order_id = up.id;
   await supa.from('order_item').delete().eq('order_id', order_id);
   if((rec.items||[]).length){
@@ -633,12 +738,21 @@ async function supaUpsertOrder(rec){
   }
 }
 
-/* Delete nube por OC (corregido getUser) */
+/* Delete nube por (oc) — RLS limita al owner */
 async function supaDeleteOrderByOC(oc){
-  const { data: { user } } = await supa.auth.getUser();
-  if(!user) return;
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return;
   const { error } = await supa.from('order_cura').delete().eq('oc', oc);
   if(error) throw error;
+}
+
+/* ¿hay sesión? */
+async function supaHasSession(){
+  try {
+    const { data:{ session } } = await supa.auth.getSession();
+    return !!session;
+  } catch {
+    return false;
+  }
 }
 
 /* Traer TODAS las órdenes del usuario logueado (nube) y mapear a formato local */
@@ -653,12 +767,14 @@ async function supaFetchAllOrders(){
     console.warn('supaFetchAllOrders error:', error.message);
     return [];
   }
+
   const out = [];
   for(const o of (orders || [])){
     const { data: items } = await supa
       .from('order_item')
       .select('producto, ia, presentacion, dosis_ha, dosis_maquinada, obs')
       .eq('order_id', o.id);
+
     out.push({
       __source: 'cloud',
       __cloud_id: o.id,
@@ -689,15 +805,13 @@ async function supaFetchAllOrders(){
   return out;
 }
 
-/* Pull incremental y merge (last-write-wins) – corregido getUser */
+/* Pull incremental y merge (last-write-wins) */
 async function supaPullSince(ts){
-  const { data: { user } } = await supa.auth.getUser();
-  if(!user) return { pulled:0 };
+  const { data: user } = await supa.auth.getUser(); if(!user || !user.user) return { pulled:0 };
   const { data: orders, error } = await supa.from('order_cura')
     .select('id, oc, fecha, finca, cultivo, manejo, tecnico, tractorista, tractor, maquinaria, vol_maquinaria, vol_aplicacion, cuartel, indicaciones, updated_at')
     .gte('updated_at', ts).order('updated_at',{ascending:true});
   if(error) throw error;
-
   let pulled=0;
   for(const o of (orders||[])){
     const { data: items } = await supa.from('order_item').select('producto, ia, presentacion, dosis_ha, dosis_maquinada, obs').eq('order_id', o.id);
@@ -709,54 +823,31 @@ async function supaPullSince(ts){
       items:(items||[]).map(it=>({ producto:it.producto||'', ingredienteActivo:it.ia||'', presentacion:it.presentacion||'', dosisHa:it.dosis_ha||'', dosisMaquinada:it.dosis_maquinada||'', obs:it.obs||'' })),
       creadoEn:new Date().toISOString(), updated_at:o.updated_at
     };
-    const locals=await listRecetas(); const hit=locals.find(r=> String(r.oc)===String(receta.oc));
+    const locals=await listRecetas(); const hit=locals.find(r=> String(r.oc)===String(receta.oc) && String(r.finca||'').trim().toUpperCase()===String(receta.finca||'').trim().toUpperCase());
     const remoteNewer = !hit || (new Date(o.updated_at).getTime() > new Date(hit.updated_at||0).getTime());
     if(remoteNewer){ if(hit) receta.id=hit.id; await saveReceta(receta); pulled++; }
   }
   return { pulled };
 }
 
-/* Merge helper: fusiona lista cloud dentro de local */
-async function mergeCloudListIntoLocal(list){
-  for(const r of (list||[])){
-    const locals = await listRecetas();
-    const hit = locals.find(x=> String(x.oc)===String(r.oc));
-    const copia = { ...r };
-    delete copia.id; delete copia.__source; delete copia.__cloud_id;
-    if(hit) copia.id = hit.id;
-    await saveReceta(copia);
-  }
-  await recomputeNextOC();
-}
-
-/* Sync robusto: incremental + (opcional) full */
-async function syncNow({full=false}={}){
+async function syncNow(){
   setCloudBadge('sincronizando');
   try{
-    const ts = full ? '1970-01-01T00:00:00Z' : await getLastSync();
+    const ts = await getLastSync();
     const { pulled } = await supaPullSince(ts);
-
-    if (full || pulled === 0) {
-      const all = await supaFetchAllOrders();
-      await mergeCloudListIntoLocal(all);
-    }
-
     await setLastSync(new Date().toISOString());
-    alert(`Sync OK. Actualizadas: ${pulled}${full?' (full)':''}.`);
+    alert(`Sync OK. Registros nuevos/actualizados: ${pulled}.`);
     setCloudBadge('conectado');
-  }catch(err){
-    console.error(err);
-    alert('Error de sincronización: '+(err.message||err));
-    setCloudBadge('error');
-  }
+  }catch(err){ console.error(err); alert('Error de sincronización: '+(err.message||err)); setCloudBadge('error'); }
 }
 
 /* ===================== Eventos UI ===================== */
-document.addEventListener('input', (e)=>{
+document.addEventListener('input', async (e)=>{
   if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){
     syncPrint();
     if(e.target.matches('.it-dosisHa,#volumenMaquinaria,#volumenAplicacion,.it-presentacion')) recalcDosisMaquinada();
     if(e.target.id==='manejo') applyManejoTheme();
+    if(e.target.id==='finca'){ await suggestOCForCurrentFinca(); } // clave: cambia OC propuesto al cambiar FINCA
     if(e.target.id==='volumenMaquinaria'||e.target.id==='volumenAplicacion'){
       const v=num(e.target.value); e.target.setCustomValidity((!isFinite(v)||v<=0)?'Debe ser un número mayor que 0':'' );
     }
@@ -765,16 +856,18 @@ document.addEventListener('input', (e)=>{
 $('#addItem').addEventListener('click', ()=> addItem() );
 $('#clearItems').addEventListener('click', ()=> { $('#items tbody').innerHTML=''; addItem(); syncPrint(); recalcDosisMaquinada(); });
 $('#btnPDF').addEventListener('click', ()=>{ syncPrint(); window.print(); });
-document.getElementById('btnSync').addEventListener('click', (e)=> syncNow({ full: e.shiftKey }));
+$('#btnSync').addEventListener('click', syncNow);
 
 /* --- Listado (modal) --- */
 function openModal(){ $('#modal').classList.add('open'); }
 function closeModal(){ $('#modal').classList.remove('open'); }
 
-/* >>> Fusiona nube + local e importa de nube si querés <<< */
+/* Fusión nube + local e importación */
 async function refreshListado(){
+  // 1) Local
   const local = await listRecetas();
 
+  // 2) Nube (si hay sesión)
   let cloud = [];
   if(await supaHasSession()){
     try{
@@ -787,49 +880,65 @@ async function refreshListado(){
     }
   }
 
-  const byOC = new Map();
-  for(const r of local){ byOC.set(String(r.oc), { ...r, __source:'local' }); }
-  for(const r of cloud){ const k=String(r.oc); if(!byOC.has(k)) byOC.set(k, r); }
+  // 3) Fusionar por FINCA+OC (prioriza local si existe)
+  const byKey = new Map();
+  for(const r of local){
+    const k = `${String(r.finca||'').trim().toUpperCase()}|${String(r.oc)}`;
+    byKey.set(k, { ...r, __source:'local' });
+  }
+  for(const r of cloud){
+    const k = `${String(r.finca||'').trim().toUpperCase()}|${String(r.oc)}`;
+    if(!byKey.has(k)) byKey.set(k, r);
+  }
 
-  const fusion = Array.from(byOC.values())
-    .sort((a,b)=> Number((b.oc||'').replace(/^0+/,'')) - Number((a.oc||'').replace(/^0+/,'')));
+  const fusion = Array.from(byKey.values())
+    .sort((a,b)=>{
+      const fa=String(a.finca||'').localeCompare(String(b.finca||''));
+      if(fa!==0) return fa;
+      return Number((b.oc||'').replace(/^0+/,'')) - Number((a.oc||'').replace(/^0+/,''));
+    });
 
+  // 4) Filtro
   const q = ($('#q')?.value||'').trim().toLowerCase();
   const fil = fusion.filter(r=>{
     const hay=(s)=> (s||'').toString().toLowerCase().includes(q);
     return !q || hay(r.finca) || hay(r.cultivo) || hay(r.oc) || hay(r.tecnico);
   });
 
+  // 5) Render
   const tbody = $('#tablaListado tbody'); tbody.innerHTML='';
   for(const r of fil){
     const fuente = r.__source==='cloud' ? '☁️' : '💾';
     const idAttr = r.id!=null ? `data-id="${r.id}"` : '';
     const ocAttr = r.oc ? `data-oc="${r.oc}"` : '';
+    const fincaAttr = r.finca ? `data-finca="${r.finca}"` : '';
     const cloudIdAttr = r.__cloud_id!=null ? `data-cloud-id="${r.__cloud_id}"` : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${r.oc||''} ${fuente}</td>
+      <td>${displayOC(r.finca, r.oc)} ${fuente}</td>
       <td>${r.fecha||''}</td>
       <td>${r.finca||''}</td>
       <td>${r.cultivo||''}</td>
       <td>${r.tecnico||''}</td>
       <td>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn small light" data-act="cargar" ${idAttr} ${ocAttr} ${cloudIdAttr}>Cargar</button>
-          <button class="btn small warning" data-act="pdf" ${idAttr} ${ocAttr} ${cloudIdAttr}>PDF</button>
-          <button class="btn small danger" data-act="eliminar" ${idAttr} ${ocAttr} ${cloudIdAttr}>Eliminar</button>
-          <button class="btn small light" data-act="importar" ${idAttr} ${ocAttr} ${cloudIdAttr} ${r.__source==='cloud'?'':'disabled'}>Importar de nube</button>
+          <button class="btn small light" data-act="cargar" ${idAttr} ${ocAttr} ${fincaAttr} ${cloudIdAttr}>Cargar</button>
+          <button class="btn small warning" data-act="pdf" ${idAttr} ${ocAttr} ${fincaAttr} ${cloudIdAttr}>PDF</button>
+          <button class="btn small danger" data-act="eliminar" ${idAttr} ${ocAttr} ${fincaAttr} ${cloudIdAttr}>Eliminar</button>
+          <button class="btn small light" data-act="importar" ${idAttr} ${ocAttr} ${fincaAttr} ${cloudIdAttr} ${r.__source==='cloud'?'':'disabled'}>Importar de nube</button>
         </div>
       </td>`;
     tbody.appendChild(tr);
   }
 
+  // 6) Acciones
   tbody.querySelectorAll('button[data-act]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const act = btn.getAttribute('data-act');
       const oc  = btn.getAttribute('data-oc') || '';
+      const finca = btn.getAttribute('data-finca') || '';
       const id  = btn.getAttribute('data-id');
-      const reg = fil.find(x => String(x.oc) === String(oc));
+      const reg = fil.find(x => String(x.oc) === String(oc) && String(x.finca||'')===String(finca));
       if(!reg) return;
 
       if(act==='cargar'){
@@ -839,13 +948,13 @@ async function refreshListado(){
         await printOrderByData(reg);
       }
       else if(act==='eliminar'){
-        const sure=confirm(`Vas a eliminar la OC ${oc}. ¿Continuar?`);
+        const sure=confirm(`Vas a eliminar la OC ${displayOC(finca, oc)}. ¿Continuar?`);
         if(!sure) return;
         try{
           if(id) await deleteRecetaLocal(Number(id));
           try{ if(await supaHasSession()) await supaDeleteOrderByOC(oc); }catch(_e){}
           await refreshListado();
-          alert(`OC ${oc} eliminada.`);
+          alert(`OC ${displayOC(finca, oc)} eliminada.`);
         }catch(err){
           alert('Error eliminando: '+(err.message||err));
         }
@@ -854,12 +963,12 @@ async function refreshListado(){
         if(reg.__source!=='cloud'){ alert('Esta fila ya es local.'); return; }
         try{
           const locals = await listRecetas();
-          const hit = locals.find(r=> String(r.oc)===String(reg.oc));
+          const hit = locals.find(r=> String(r.oc)===String(reg.oc) && String(r.finca||'')===String(reg.finca||''));
           const copia = { ...reg };
           delete copia.id; delete copia.__source; delete copia.__cloud_id;
           const savedId = await saveReceta(hit ? { ...copia, id:hit.id } : copia);
-          await recomputeNextOC();
-          alert(`OC ${oc} importada en local (ID ${savedId}).`);
+          await recomputeNextOCForFinca(reg.finca);
+          alert(`OC ${displayOC(reg.finca, reg.oc)} importada en local (ID ${savedId}).`);
           await refreshListado();
         }catch(e){
           alert('No se pudo importar: '+(e?.message||e));
@@ -879,7 +988,7 @@ if(qInput){ qInput.addEventListener('input', refreshListado); }
 
 /* --- Backup/Restore --- */
 $('#btnBackup').addEventListener('click', async ()=>{
-  const payload={ exportedAt:new Date().toISOString(), nextOC: await getNextOC(), catalogo: await catAll(), data: await listRecetas() };
+  const payload={ exportedAt:new Date().toISOString(), nextOCMap: await getNextOCMap(), catalogo: await catAll(), data: await listRecetas() };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download=`backup_ordenes_${new Date().toISOString().replace(/[:]/g,'-')}.json`; a.click(); URL.revokeObjectURL(a.href);
@@ -888,20 +997,20 @@ $('#restoreFile').addEventListener('change', async (e)=>{
   const f=e.target.files?.[0]; if(!f){ e.target.value=''; return; }
   try{
     const text=await f.text(); const parsed=JSON.parse(text);
-    const arr=Array.isArray(parsed)?parsed:(parsed.data||[]); const nextOC=parsed.nextOC; const cat=parsed.catalogo||[];
+    const arr=Array.isArray(parsed)?parsed:(parsed.data||[]); const nextOCMap=parsed.nextOCMap; const cat=parsed.catalogo||[];
     if(!Array.isArray(arr)){ alert('Archivo inválido'); return; }
     if(!idbOk){
       const curr=lsGet(LS_KEYS.recetas)||[]; arr.forEach(r=>{ const cp={...r}; delete cp.id; cp.id=(curr.reduce((m,x)=>Math.max(m,x.id||0),0)+1); curr.push(cp); });
-      lsSet(LS_KEYS.recetas,curr); if(Array.isArray(cat)) lsSet(LS_KEYS.catalogo,cat); if(Number.isInteger(nextOC)){ const s=lsGet(LS_KEYS.settings)||{}; s.nextOC=nextOC; lsSet(LS_KEYS.settings,s); }
+      lsSet(LS_KEYS.recetas,curr); if(Array.isArray(cat)) lsSet(LS_KEYS.catalogo,cat); if(nextOCMap && typeof nextOCMap==='object'){ const s=lsGet(LS_KEYS.settings)||{}; s[NEXT_MAP_KEY]=nextOCMap; lsSet(LS_KEYS.settings,s); }
     }else{
       const store=tx('recetas','readwrite');
       await new Promise((resolve,reject)=>{
         let i=0; const putNext=()=>{ if(i>=arr.length){ resolve(); return; } const rec={...arr[i++]}; delete rec.id; const r=store.put(rec);
           r.onsuccess=putNext; r.onerror=()=>reject(r.error); }; putNext();
       });
-      for(const c of cat){ await idbPut('catalogo',c); } if(Number.isInteger(nextOC)) await setNextOC(nextOC);
+      for(const c of cat){ await idbPut('catalogo',c); } if(nextOCMap && typeof nextOCMap==='object') await setNextOCMap(nextOCMap);
     }
-    await recomputeNextOC(); await refreshDatalist(); alert('Restauración completada.');
+    await recomputeAllFincasNextOC(); await refreshDatalist(); alert('Restauración completada.');
   }catch(err){ console.error(err); alert('Error al restaurar: '+err.message); }
   e.target.value='';
 });
@@ -926,7 +1035,9 @@ $('#btnGuardar').addEventListener('click', async ()=>{
 
   try{
     const id = await saveReceta(receta);
+    // Aseguro que el visible quede coherente
     $('#oc').value = receta.oc;
+    $('#ocVisible').textContent = displayOC(receta.finca, receta.oc);
     alert('Orden guardada localmente (ID '+id+'). Intentando sincronizar…');
     await supaUpsertOrder(receta); // nube
     await setLastSync(new Date().toISOString());
@@ -964,8 +1075,8 @@ $('#btnNueva').addEventListener('click', async ()=>{
   $('#maquinaria').value=''; $('#volumenMaquinaria').value=''; $('#volumenAplicacion').value='';
   $('#cuartel').value=''; $('#indicaciones').value='';
   $('#items tbody').innerHTML=''; addItem();
+  $('#oc').value=''; $('#ocVisible').textContent='—';
   syncPrint(); updateFactorChip(); applyManejoTheme();
-  $('#oc').value=String(await getNextOC()).padStart(6,'0');
 });
 
 /* ===================== INIT ===================== */
@@ -973,14 +1084,25 @@ $('#btnNueva').addEventListener('click', async ()=>{
   storageBadge.textContent='Inicializando almacenamiento…';
   await openDB();
   if(idbOk&&db){ storageBadge.style.background='#34d399'; storageBadge.textContent='Almacenamiento: IndexedDB'; }
-  else{ storageBadge.style.background='#60a5fa'; storageBadge.textContent='Almacenamiento: localStorage'; if(lsGet(LS_KEYS.recetas)==null) lsSet(LS_KEYS.recetas, []); if(lsGet(LS_KEYS.settings)==null) lsSet(LS_KEYS.settings, { nextOC:1 }); if(lsGet(LS_KEYS.catalogo)==null) lsSet(LS_KEYS.catalogo, []); }
+  else{
+    storageBadge.style.background='#60a5fa'; storageBadge.textContent='Almacenamiento: localStorage';
+    if(lsGet(LS_KEYS.recetas)==null) lsSet(LS_KEYS.recetas, []);
+    if(lsGet(LS_KEYS.settings)==null) lsSet(LS_KEYS.settings, { [NEXT_MAP_KEY]:{} });
+    if(lsGet(LS_KEYS.catalogo)==null) lsSet(LS_KEYS.catalogo, []);
+  }
 
-  if(idbOk){ const cur=await getSetting('nextOC'); if(cur==null) await setNextOC(1); }
-  await recomputeNextOC(); $('#oc').value=String(await getNextOC()).padStart(6,'0');
+  // Asegurar mapa de next por finca y recalcular de datos locales
+  if(!(await getSetting(NEXT_MAP_KEY))) await setNextOCMap({});
+  await recomputeAllFincasNextOC();
+
   if(!$('#fecha').value) $('#fecha').value=todayISO();
   if($('#items tbody').children.length===0) addItem();
   await refreshDatalist(); syncPrint(); updateFactorChip(); applyManejoTheme();
 
+  // si ya hay FINCA seleccionada (p.ej. al recargar), sugerir N°
+  if($('#finca').value){ await suggestOCForCurrentFinca(); }
+
+  // Auth
   const { data:{ session } } = await supa.auth.getSession();
   uiAuth(!!session);
   if(session) setCloudBadge('conectado');
@@ -997,6 +1119,7 @@ $('#btnNueva').addEventListener('click', async ()=>{
   </script>
 </body>
 </html>
+
 
 
 
